@@ -1,0 +1,51 @@
+services:
+  backend:
+    image: ${BACKEND_IMAGE} # This will be substituted by the CI/CD pipeline
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "4000"
+    environment:
+      - VIRTUAL_HOST=${BACKEND_DOMAIN}
+      - VIRTUAL_PORT=4000
+      - VIRTUAL_CLIENT_MAX_BODY_SIZE=50m
+      - LETSENCRYPT_HOST=${BACKEND_DOMAIN}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+    volumes:
+      - /var/www/app2/uploads:/app/uploads:rw # Correct path
+
+  frontend:
+    image: ${FRONTEND_IMAGE} # This will be substituted by the CI/CD pipeline
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      - VIRTUAL_HOST=${FRONTEND_DOMAIN}
+      - LETSENCRYPT_HOST=${FRONTEND_DOMAIN}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:alpine
+    container_name: nginx-proxy # Explicitly name the container
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./certs:/etc/nginx/certs
+      - ./vhost.d:/etc/nginx/vhost.d
+      - ./html:/usr/share/nginx/html
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+
+  acme-companion:
+    image: nginxproxy/acme-companion
+    restart: unless-stopped
+    environment:
+      - NGINX_PROXY_CONTAINER=nginx-proxy # Tell acme where to find the proxy
+    volumes:
+      - ./certs:/etc/nginx/certs
+      - ./vhost.d:/etc/nginx/vhost.d
+      - ./html:/usr/share/nginx/html
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - "nginx-proxy"

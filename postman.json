@@ -1,0 +1,133 @@
+{
+  "info": {
+    "name": "Soroban Compliance Backend",
+    "_postman_id": "f9c7c7a8-5d1a-47b5-a5e1-9086db60d88e",
+    "description": "Postman collection for testing Soroban Compliance ExpressJS backend with JWT RBAC auth.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register (Company)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"company1@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"company\",\n  \"name\": \"Company One\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] }
+          }
+        },
+        {
+          "name": "Register (Regulator)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"regulator1@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"regulator\",\n  \"name\": \"Regulator One\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] }
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"company1@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"<paste_refresh_token_here>\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/refresh", "host": ["{{baseUrl}}"], "path": ["api", "auth", "refresh"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Company",
+      "item": [
+        {
+          "name": "Submit Certificate",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{companyAccessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Environmental Compliance 2025\",\n  \"description\": \"ISO-14001 audit passed\",\n  \"metadata\": {\n    \"auditor\": \"XYZ Audits Ltd\",\n    \"score\": \"A+\"\n  }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/certificates", "host": ["{{baseUrl}}"], "path": ["api", "certificates"] }
+          }
+        },
+        {
+          "name": "List Certificates",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{companyAccessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/certificates", "host": ["{{baseUrl}}"], "path": ["api", "certificates"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Regulator",
+      "item": [
+        {
+          "name": "Approve Certificate",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{regulatorAccessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/certificates/<certificateId>/approve", "host": ["{{baseUrl}}"], "path": ["api", "certificates", "<certificateId>", "approve"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Public",
+      "item": [
+        {
+          "name": "Verify Certificate",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/certificates/verify/<certificateId>", "host": ["{{baseUrl}}"], "path": ["api", "certificates", "verify", "<certificateId>"] }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "companyAccessToken", "value": "" },
+    { "key": "regulatorAccessToken", "value": "" }
+  ]
+}

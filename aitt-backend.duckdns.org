@@ -1,0 +1,2 @@
+# Set a 50MB file upload limit specifically for this virtual host
+client_max_body_size 50m;
