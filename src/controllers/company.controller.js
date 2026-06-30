@@ -1,6 +1,46 @@
 const companyService = require('../services/company.service');
 const logger = require('../utils/logger');
 
+async function registerCompany(req, res, next) {
+  try {
+    const { name, email, password, contactPhone, wallet } = req.body || {};
+    const company = await companyService.registerCompany({ name, email, password, contactPhone, wallet });
+    res.status(201).json({ success: true, data: company });
+  } catch (err) {
+    logger.error('registerCompany failed', { error: err.message });
+    next(err);
+  }
+}
+
+async function approveCompany(req, res, next) {
+  try {
+    const company = await companyService.approveCompany(req.params.id, { approverUserId: req.user.sub });
+    res.json({ success: true, data: company });
+  } catch (err) {
+    logger.error('approveCompany failed', { error: err.message, id: req.params.id });
+    next(err);
+  }
+}
+
+async function removeCompany(req, res, next) {
+  try {
+    const result = await companyService.removeCompany(req.params.id);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function listCompaniesSerialized(req, res, next) {
+  try {
+    const { page = 1, limit = 20, q = '' } = req.query;
+    const result = await companyService.listCompaniesSerialized({ page, limit, q });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function createCompany(req, res, next) {
   try {
     const data = req.body;
@@ -33,12 +73,21 @@ async function listCompanies(req, res, next) {
 async function getCompany(req, res, next) {
   try {
     const { id } = req.params;
-    const company = await companyService.getCompanyById(id);
-    if (!company) return res.status(404).json({ success: false, message: 'Company not found' });
+    // Frontend-shaped (serialized) single company, with document count.
+    const company = await companyService.getCompanySerialized(id);
     res.json({ success: true, data: company });
   } catch (err) {
     next(err);
   }
 }
 
-module.exports = { createCompany, listCompanies, getCompany, listCompaniesWithUsers };
+module.exports = {
+  createCompany,
+  listCompanies,
+  getCompany,
+  listCompaniesWithUsers,
+  registerCompany,
+  approveCompany,
+  removeCompany,
+  listCompaniesSerialized,
+};

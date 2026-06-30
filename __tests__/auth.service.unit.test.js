@@ -82,9 +82,18 @@ const regulatorService = require('../src/services/regulator.service');
 const auth = require('../src/services/auth.service');
 const AppError = require('../src/utils/AppError');
 
+// Chainable mock for RefreshToken.find().sort().limit() -> resolves `arr`.
+function findChain(arr) {
+  const chain = { sort: jest.fn(() => chain), limit: jest.fn().mockResolvedValue(arr) };
+  return chain;
+}
+
 describe('auth.service (unit)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // clearAllMocks does NOT drain mockResolvedValueOnce queues — reset bcrypt so
+    // an unconsumed `compare(...).once` from one test can't bleed into the next.
+    bcrypt.compare.mockReset();
   });
 
   describe('registerUser', () => {
@@ -240,22 +249,21 @@ describe('auth.service (unit)', () => {
   });
 
   describe('refresh', () => {
-    it('throws 500 when refresh token expired (service wraps errors)', async () => {
-      // Setup token that matches bcrypt.compare and is expired
+    it('throws 401 when refresh token expired', async () => {
+      // Setup token that matches bcrypt.compare and is expired.
       const oldDate = new Date(Date.now() - 1000);
       const tokenDoc = { _id: 't1', tokenHash: 'HASH', userId: 'u12', expiresAt: oldDate, save: jest.fn() };
-      RefreshToken.find.mockResolvedValueOnce([tokenDoc]);
-      // make bcrypt.compare return true for the provided raw
+      RefreshToken.find.mockReturnValueOnce(findChain([tokenDoc]));
       bcrypt.compare.mockResolvedValueOnce(true);
 
-      // Because the service currently wraps thrown AppError into 500, expect 500 here
-      await expect(auth.refresh({ refreshTokenRaw: 'raw' })).rejects.toMatchObject({ statusCode: 500 });
+      // The service re-throws AppError verbatim, so an expired token surfaces as 401.
+      await expect(auth.refresh({ refreshTokenRaw: 'raw' })).rejects.toMatchObject({ statusCode: 401 });
     });
 
     it('successful refresh exchanges token', async () => {
       const future = new Date(Date.now() + 1000 * 60 * 60);
       const tokenDoc = { _id: 't2', tokenHash: 'HASH2', userId: 'u13', expiresAt: future, save: jest.fn() };
-      RefreshToken.find.mockResolvedValueOnce([tokenDoc]);
+      RefreshToken.find.mockReturnValueOnce(findChain([tokenDoc]));
       bcrypt.compare.mockResolvedValueOnce(true);
 
       // mock User.findById to return user
@@ -272,9 +280,9 @@ describe('auth.service (unit)', () => {
       expect(tokenDoc.save).toHaveBeenCalled();
     });
 
-    it('throws 500 when no matching token found (service wraps errors)', async () => {
-      RefreshToken.find.mockResolvedValueOnce([]);
-      await expect(auth.refresh({ refreshTokenRaw: 'x' })).rejects.toMatchObject({ statusCode: 500 });
+    it('throws 401 when no matching token found', async () => {
+      RefreshToken.find.mockReturnValueOnce(findChain([]));
+      await expect(auth.refresh({ refreshTokenRaw: 'x' })).rejects.toMatchObject({ statusCode: 401 });
     });
   });
 

@@ -5,14 +5,17 @@ const sorobanController = require('../controllers/soroban.controller');
 const { requireAuth, authenticateOptional } = require('../middlewares/auth.middleware');
 
 /*
-  AUTH RULES:
-  - Protected (requireAuth): init, transfer_ownership, whitelist, remove_whitelist
-  - All other routes are public (no auth) per your request.
+  AUTH RULES (P3 — locked down):
+  - store_document is NO LONGER public. Documents are anchored via the
+    review-gated /api/v1/documents flow (re-hashed server-side). This raw
+    passthrough is now restricted to admins for ops/debugging only.
+  - verify/read stay public (read-only verification).
+  - init, transfer_ownership, whitelist, remove_whitelist remain admin-only.
 */
 
 // Write operations
-// public: store_document (no auth)
-router.post('/store_document', sorobanController.storeDocument);
+// LOCKED DOWN (was public): raw store_document is admin-only now.
+router.post('/store_document', requireAuth(['super_admin', 'regulator_admin']), sorobanController.storeDocument);
 
 // Public verification / read-only (no auth)
 router.get('/verify/:hash', sorobanController.verifyDocument);

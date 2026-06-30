@@ -103,7 +103,11 @@ describe('getAllCertificates', () => {
 describe('updateCertificate', () => {
   it('updates cert and deletes old file if needed', async () => {
     Certificate.findById.mockResolvedValue({ _id: 'cert1', storage: { path: 'oldpath' } });
-    Certificate.findByIdAndUpdate.mockResolvedValue({ _id: 'cert1', certificateName: 'Updated' });
+    // The service does findByIdAndUpdate(...).populate(...), so the mock must be
+    // chainable (returns a thenable with .populate). (Was mockResolvedValue — P3 fix.)
+    Certificate.findByIdAndUpdate.mockReturnValue({
+      populate: jest.fn().mockResolvedValue({ _id: 'cert1', certificateName: 'Updated' })
+    });
     fs.existsSync.mockReturnValue(true);
     fs.unlinkSync.mockReturnValue();
 

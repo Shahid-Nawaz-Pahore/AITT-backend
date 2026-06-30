@@ -8,7 +8,6 @@ const logger = require('../utils/logger');
 const AppError = require('../utils/AppError');
 
 const ACCESS_TTL = process.env.JWT_ACCESS_TTL || '15m';
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
 const REFRESH_TTL_MS = (() => {
   const ttl = process.env.JWT_REFRESH_TTL || '60d';
   if (ttl.endsWith('d')) return parseInt(ttl) * 24 * 60 * 60 * 1000;
@@ -16,7 +15,14 @@ const REFRESH_TTL_MS = (() => {
   return 60 * 24 * 60 * 60 * 1000;
 })();
 
-if (!ACCESS_SECRET) throw new Error('JWT_ACCESS_SECRET must be set in .env');
+// IMPORT-SAFE: read + validate the JWT secret lazily on first use instead of at
+// module load, so requiring this service (e.g. via routes/index in tests) no
+// longer throws before env is configured. Same pattern as soroban.service.
+function getAccessSecret() {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (!secret) throw new AppError(500, 'JWT_ACCESS_SECRET must be set in .env');
+  return secret;
+}
 
 /**
  * Register a new user
@@ -128,7 +134,7 @@ function signAccessToken(user) {
     companyId: user.companyId || null,
     regulatorId: user.regulatorId || null,
   };
-  return jwt.sign(payload, ACCESS_SECRET, { expiresIn: ACCESS_TTL });
+  return jwt.sign(payload, getAccessSecret(), { expiresIn: ACCESS_TTL });
 }
 
 /**
@@ -239,7 +245,7 @@ async function exchangeApiKey(rawKey) {
 
     const access = jwt.sign(
       { sub: user._id, role: user.role, companyId: user.companyId, regulatorId: user.regulatorId },
-      ACCESS_SECRET,
+      getAccessSecret(),
       { expiresIn: ACCESS_TTL }
     );
 

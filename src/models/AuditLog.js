@@ -1,0 +1,18 @@
+// src/models/AuditLog.js
+// Lightweight request-level audit trail (P5). Every successful state-changing
+// API call (POST/PUT/PATCH/DELETE) is recorded by audit.middleware. Chain-level
+// auditing lives in Web3Tx; lifecycle events in CertificateEvent — this is the
+// who-did-what-when across the whole API.
+const mongoose = require('mongoose');
+
+const auditLogSchema = new mongoose.Schema({
+  actorUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+  role: { type: String, default: null },
+  method: { type: String, index: true },
+  path: { type: String, index: true },
+  statusCode: { type: Number },
+  ip: { type: String },
+  durationMs: { type: Number },
+}, { timestamps: true });
+
+module.exports = mongoose.model('AuditLog', auditLogSchema);

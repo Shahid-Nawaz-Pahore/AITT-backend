@@ -31,13 +31,9 @@ router.post('/check',
 // Get a certificate (requires auth or optional) - public/semi-public access
 router.get('/:id', authenticateOptional, certificatesController.getCertificate);
 
-// Issue a certificate (regulator only)
-router.post('/:id/issue', requireAuth(['regulator_admin', 'super_admin']), 
-    certificatesController.issueCertificate);
-
-// Validate a certificate (regulator only)
-router.post('/:id/validate', requireAuth(['regulator_admin', 'super_admin']), 
-    certificatesController.validateCertificate);
+// NOTE (P1 / BE-C1): the broken POST /:id/issue and POST /:id/validate routes
+// were removed with their handlers. The review-gated issue flow is rebuilt in
+// P3 under /documents/:id/issue (no separate validate step exists on-chain).
 
 // Public verify (no auth required)
 router.get('/:id/verify', certificatesController.verifyPublic);

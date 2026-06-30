@@ -523,50 +523,10 @@ async function getCertificate(req, res, next) {
   }
 }
 
-async function issueCertificate(req, res, next) {
-  try {
-    const { id } = req.params;
-    const { notes, expiryAt } = req.body;
-
-    const result = await certificateService.issueCertificate({
-      certificateId: id,
-      issuedByUserId: req.user.sub,
-      notes,
-      expiryAt,
-    });
-
-    logger.info('Certificate issued', {
-      certificateId: id,
-      issuedBy: req.user.sub,
-      txId: result.tx?._id || null,
-    });
-
-    res.json({ success: true, data: { certificate: result.cert, tx: result.tx } });
-  } catch (err) {
-    logger.error('Error issuing certificate', { error: err.message, certificateId: req.params.id });
-    next(err);
-  }
-}
-
-async function validateCertificate(req, res, next) {
-  try {
-    const { id } = req.params;
-    const result = await certificateService.validateCertificate({
-      certificateId: id,
-      validatorUserId: req.user.sub,
-    });
-
-    logger.info('Certificate validated', {
-      certificateId: id,
-      validatorId: req.user.sub,
-    });
-
-    res.json({ success: true, data: result });
-  } catch (err) {
-    logger.error('Error validating certificate', { error: err.message, certificateId: req.params.id });
-    next(err);
-  }
-}
+// NOTE (P1 / BE-C1): `issueCertificate` and `validateCertificate` handlers were
+// removed alongside the broken service methods they called. The review-gated
+// issue flow is rebuilt in P3 (POST /documents/:id/issue); there is no separate
+// "validate" step in the deployed contract's lifecycle.
 
 async function verifyPublic(req, res, next) {
   try {
@@ -603,7 +563,5 @@ module.exports = {
   deleteCertificate,
   upload,
   getCertificate,
-  issueCertificate,
-  validateCertificate,
   verifyPublic,
 };

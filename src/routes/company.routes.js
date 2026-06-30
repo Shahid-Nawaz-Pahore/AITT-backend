@@ -3,14 +3,23 @@ const router = express.Router();
 const companyController = require('../controllers/company.controller');
 const { requireAuth } = require('../middlewares/auth.middleware');
 
-// Create new company (maybe limited to super_admin later)
+// Public self-registration (frontend addCompany) -> PENDING company + admin login.
+router.post('/register', companyController.registerCompany);
+
+// Create new company (admin-managed)
 router.post('/', requireAuth(['super_admin']), companyController.createCompany);
 
-// List all companies
-router.get('/', requireAuth(['super_admin', 'regulator_admin','company_admin']), companyController.listCompanies);
-router.get('/with-users', requireAuth(['super_admin', 'regulator_admin']), companyController.listCompaniesWithUsers);
+// Frontend-shaped, paginated list with document counts.
+router.get('/', requireAuth(['super_admin', 'regulator_admin', 'sub_admin', 'company_admin']), companyController.listCompaniesSerialized);
+router.get('/with-users', requireAuth(['super_admin', 'regulator_admin', 'sub_admin']), companyController.listCompaniesWithUsers);
+
+// Approve a pending company -> whitelist_address on chain -> active (admin only).
+router.post('/:id/approve', requireAuth(['super_admin']), companyController.approveCompany);
+
+// Remove a company (admin only).
+router.delete('/:id', requireAuth(['super_admin']), companyController.removeCompany);
 
 // Get single company
-router.get('/:id', requireAuth(['super_admin', 'regulator_admin', 'company_admin']), companyController.getCompany);
+router.get('/:id', requireAuth(['super_admin', 'regulator_admin', 'sub_admin', 'company_admin']), companyController.getCompany);
 
 module.exports = router;

@@ -14,21 +14,38 @@ const {
 const logger = require('../utils/logger');
 const AppError = require('../utils/AppError');
 
-// config from .env
-const RPC_URL = process.env.RPC_URL;
+// ---------------------------------------------------------------------------
+// IMPORT-SAFE lazy config + clients (P2 punch-list).
+// Previously this module read env + threw + built the Keypair/Server/Contract at
+// the TOP LEVEL, so merely requiring it (e.g. jest auto-mock introspection in
+// tests/certificate.test.js) blew up with "RPC_URL must be set in .env" before
+// any env was loaded. Now nothing runs until a function is actually called.
+// ---------------------------------------------------------------------------
 const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
-const CONTRACT_ID = process.env.CONTRACT_ID;
-const OWNER_ADDRESS = process.env.OWNER_ADDRESS;
-const SERVICE_SECRET = process.env.SERVICE_SECRET;
 const FRIENDBOT_URL = process.env.FRIENDBOT_URL || 'https://friendbot.stellar.org';
+// Bounded tx-confirmation tuning (fixes the unbounded NOT_FOUND poll loop).
+const TX_TIMEOUT_MS = Number(process.env.SOROBAN_TX_TIMEOUT_MS || 60000);
+const TX_POLL_INTERVAL_MS = Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS || 1000);
+const TX_POLL_MAX_MS = Number(process.env.SOROBAN_TX_POLL_MAX_MS || 5000);
 
-if (!RPC_URL) throw new Error('RPC_URL must be set in .env');
-if (!CONTRACT_ID) throw new Error('CONTRACT_ID must be set in .env');
-if (!SERVICE_SECRET) throw new Error('SERVICE_SECRET must be set in .env');
+const OWNER_ADDRESS = process.env.OWNER_ADDRESS;
 
-const serviceKP = Keypair.fromSecret(SERVICE_SECRET);
-const server = new SorobanRpc.Server(RPC_URL);
-const contract = new Contract(CONTRACT_ID);
+let _clients = null;
+function getClients() {
+  if (_clients) return _clients;
+  const RPC_URL = process.env.RPC_URL;
+  const CONTRACT_ID = process.env.CONTRACT_ID;
+  const SERVICE_SECRET = process.env.SERVICE_SECRET;
+  if (!RPC_URL) throw new AppError(500, 'RPC_URL must be set in .env');
+  if (!CONTRACT_ID) throw new AppError(500, 'CONTRACT_ID must be set in .env');
+  if (!SERVICE_SECRET) throw new AppError(500, 'SERVICE_SECRET must be set in .env');
+  _clients = {
+    serviceKP: Keypair.fromSecret(SERVICE_SECRET),
+    server: new SorobanRpc.Server(RPC_URL),
+    contract: new Contract(CONTRACT_ID),
+  };
+  return _clients;
+}
 
 /* ---------------- Helpers ---------------- */
 
@@ -62,7 +79,9 @@ function makeScValString(str) {
  * - args: array of SCVal args (already created via makeScVal*)
  * - signerKP: Keypair (optional) to sign with; defaults to serviceKP
  */
-async function sendTx(method, args = [], signerKP = serviceKP) {
+async function sendTx(method, args = [], signerKP = null) {
+  const { server, contract, serviceKP } = getClients();
+  signerKP = signerKP || serviceKP;
   try {
     const signerPubShort = signerKP.publicKey().slice(0,8);
     logger.info('sendTx start', { method, argCount: args.length, signer: signerPubShort });
@@ -100,14 +119,24 @@ async function sendTx(method, args = [], signerKP = serviceKP) {
       throw new AppError(500, 'Transaction failed', JSON.stringify(sendResp.errorResult));
     }
 
-    // wait confirmation
+    // wait confirmation — BOUNDED: hard deadline + capped back-off so a stuck
+    // NOT_FOUND can never spin forever (was `while (NOT_FOUND)` with no exit).
+    const deadline = Date.now() + TX_TIMEOUT_MS;
+    let interval = TX_POLL_INTERVAL_MS;
+    let attempts = 0;
     let txResp = await server.getTransaction(sendResp.hash);
+    attempts += 1;
     while (txResp.status === 'NOT_FOUND') {
-      await new Promise(r => setTimeout(r, 1000));
+      if (Date.now() >= deadline) {
+        throw new AppError(504, `Transaction confirmation timed out after ${attempts} attempts (${TX_TIMEOUT_MS}ms)`, sendResp.hash);
+      }
+      await new Promise(r => setTimeout(r, interval));
+      interval = Math.min(Math.floor(interval * 1.5), TX_POLL_MAX_MS);
       txResp = await server.getTransaction(sendResp.hash);
+      attempts += 1;
     }
 
-    logger.info('sendTx success', { method, hash: sendResp.hash, status: txResp.status, ledger: txResp.ledger });
+    logger.info('sendTx success', { method, hash: sendResp.hash, status: txResp.status, ledger: txResp.ledger, attempts });
     return { hash: sendResp.hash, status: txResp.status, ledger: txResp.ledger, feeCharged: txResp.feeCharged };
   } catch (err) {
     logger.error('sendTx failed', { method, message: err?.message?.slice?.(0,200) ?? String(err) });
@@ -119,7 +148,9 @@ async function sendTx(method, args = [], signerKP = serviceKP) {
  * fetchValue(method, args = [], signerKP = serviceKP)
  * - read-only: you can optionally provide signerKP but defaults to serviceKP.
  */
-async function fetchValue(method, args = [], signerKP = serviceKP) {
+async function fetchValue(method, args = [], signerKP = null) {
+  const { server, contract, serviceKP } = getClients();
+  signerKP = signerKP || serviceKP;
   try {
     logger.info('fetchValue start', { method, argCount: args.length });
 
@@ -165,7 +196,7 @@ async function fetchValue(method, args = [], signerKP = serviceKP) {
  */
 async function storeDocument(name, hash, signerSecret = null) {
   try {
-    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : serviceKP;
+    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : getClients().serviceKP;
     const actorPub = signerKP.publicKey();
 
     logger.info('storeDocument start', { namePrefix: (name||'').slice(0,16), hashShort: (hash||'').slice(0,16), actorShort: actorPub.slice(0,8) });
@@ -190,7 +221,7 @@ async function storeDocument(name, hash, signerSecret = null) {
  */
 async function verifyDocument(hash, signerSecret = null) {
   try {
-    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : serviceKP;
+    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : getClients().serviceKP;
     logger.info('verifyDocument start', { hashShort: (hash||'').slice(0,16) });
 
     const result = await fetchValue('verify_document', [ makeScValString(hash) ], signerKP);
@@ -233,7 +264,7 @@ async function isWhitelisted(address) {
 
 async function whitelistAddress(address, signerSecret = null) {
   try {
-    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : serviceKP;
+    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : getClients().serviceKP;
     logger.info('whitelistAddress start', { addressShort: address?.slice?.(0,8) ?? null, signerShort: signerKP.publicKey().slice(0,8) });
     const addrSc = makeScValAddress(address);
     const receipt = await sendTx('whitelist_address', [ addrSc ], signerKP);
@@ -247,7 +278,7 @@ async function whitelistAddress(address, signerSecret = null) {
 
 async function removeFromWhitelist(address, signerSecret = null) {
   try {
-    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : serviceKP;
+    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : getClients().serviceKP;
     logger.info('removeFromWhitelist start', { addressShort: address?.slice?.(0,8) ?? null, signerShort: signerKP.publicKey().slice(0,8) });
     const addrSc = makeScValAddress(address);
     const receipt = await sendTx('remove_from_whitelist', [ addrSc ], signerKP);
@@ -272,7 +303,7 @@ async function ownerAddress() {
 
 async function transferOwnership(newOwner, signerSecret = null) {
   try {
-    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : serviceKP;
+    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : getClients().serviceKP;
     logger.info('transferOwnership start', { newOwnerShort: newOwner?.slice?.(0,8) ?? null, signerShort: signerKP.publicKey().slice(0,8) });
     const sc = makeScValAddress(newOwner);
     const receipt = await sendTx('transfer_ownership', [ sc ], signerKP);
@@ -335,7 +366,7 @@ async function fundWallet(publicKey) {
 
 async function initContract(signerSecret = null) {
   try {
-    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : serviceKP;
+    const signerKP = signerSecret ? Keypair.fromSecret(signerSecret) : getClients().serviceKP;
     logger.info('initContract start', { ownerShort: OWNER_ADDRESS?.slice?.(0,8) ?? null, signerShort: signerKP.publicKey().slice(0,8) });
     const receipt = await sendTx('init', [ makeScValAddress(OWNER_ADDRESS) ], signerKP);
     logger.info('initContract success', { txHash: receipt.hash });

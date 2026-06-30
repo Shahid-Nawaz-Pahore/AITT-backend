@@ -83,12 +83,14 @@ describe('certificate.service (unit)', () => {
     it('throws 400 when document already exists on chain', async () => {
       sorobanService.readDocument.mockResolvedValue({ some: 'val' });
 
+      // The service throws AppError(400, '...already exists on chain') and the
+      // catch re-throws the 400 verbatim. (Was asserting 500 — test typo, P3 fix.)
       await expect(svc.createCertificate({
         certificateName: 'C',
         subject: 'S',
         metadataHash: 'abc',
         requestedByUserId: 'u'
-      })).rejects.toMatchObject({ statusCode: 500 });
+      })).rejects.toMatchObject({ statusCode: 400 });
 
       expect(sorobanService.readDocument).toHaveBeenCalledWith('abc');
     });

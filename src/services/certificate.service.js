@@ -672,118 +672,14 @@ async function getCertificate(id) {
   return cert;
 }
 
-/**
- * Issue a certificate on chain
- */
-async function issueCertificate({ certificateId, issuedByUserId, network = 'testnet', notes = null, expiryAt = null }) {
-  logger.info(`Issuing certificate=${certificateId} on network=${network}`);
-
-  const cert = await Certificate.findById(certificateId);
-  if (!cert) throw new AppError('Certificate not found', 404);
-  if (cert.status === 'issued') throw new AppError('Certificate already issued', 400);
-
-  if (expiryAt && new Date(expiryAt) <= new Date()) {
-    throw new AppError('Expiry date must be in the future', 400);
-  }
-
-  // Create web3 tx record
-  const tx = await Web3Tx.create({
-    network,
-    purpose: 'issue',
-    certificateId: cert._id,
-    submittedByUserId: issuedByUserId,
-    status: 'submitted',
-    requestDump: { notes },
-  });
-
-  // ---- Blockchain call ----
-  const receipt = await web3Service.issueCertificateOnChain({
-    certificateId: cert._id.toString(),
-    network,
-    metadataHash: cert.metadataHash,
-    expiryAt,
-  });
-
-  // Update tx info
-  tx.txHash = receipt.txHash;
-  tx.status = receipt.success ? 'confirmed' : 'failed';
-  tx.responseDump = receipt;
-  await tx.save();
-
-  if (!receipt.success) {
-    logger.error('Blockchain issuance failed', { certId: cert._id, receipt });
-    throw new AppError('Blockchain issuance failed', 500, receipt);
-  }
-
-  // Update certificate
-  cert.status = 'issued';
-  cert.chain = {
-    ...(cert.chain || {}),
-    txHashIssue: receipt.txHash,
-    onChainId: receipt.onChainId || receipt.txHash, // fallback
-    network,
-  };
-  cert.expiryAt = expiryAt;
-  await cert.save();
-
-  await CertificateEvent.create({
-    certificateId: cert._id,
-    type: 'issued',
-    actor: { userId: issuedByUserId, role: 'regulator_admin' },
-    details: { notes },
-  });
-
-  logger.info(`Certificate issued successfully certId=${cert._id}`);
-  return { cert, tx };
-}
-
-/**
- * Validate a certificate on chain
- */
-async function validateCertificate({ certificateId, validatorUserId }) {
-  logger.info(`Validating certificate=${certificateId}`);
-
-  const cert = await Certificate.findById(certificateId);
-  if (!cert) throw new AppError('Certificate not found', 404);
-
-  if (!cert.chain || !cert.chain.onChainId) {
-    throw new AppError('Certificate not anchored on chain', 400);
-  }
-
-  const network = cert.chain.network || 'testnet';
-  const receipt = await web3Service.validateCertificateOnChain({
-    certificateId: cert.chain.onChainId,
-    network,
-  });
-
-  await Web3Tx.create({
-    network,
-    purpose: 'validate',
-    certificateId: cert._id,
-    submittedByUserId: validatorUserId,
-    txHash: receipt.txHash,
-    status: receipt.success ? 'confirmed' : 'failed',
-    responseDump: receipt,
-  });
-
-  if (receipt.success) {
-    cert.status = 'validated';
-    await cert.save();
-
-    await CertificateEvent.create({
-      certificateId: cert._id,
-      type: 'validated',
-      actor: { userId: validatorUserId, role: 'regulator_admin' },
-      details: receipt,
-    });
-
-    logger.info(`Certificate validated certId=${cert._id}`);
-  } else {
-    logger.warn(`Certificate validation failed certId=${cert._id}`, { receipt });
-  }
-
-  return { success: receipt.success, receipt };
-}
+// ---------------------------------------------------------------------------
+// NOTE (P1 / BE-C1): the previous `issueCertificate()` and `validateCertificate()`
+// were removed. They referenced an undefined `web3Service` (a guaranteed
+// ReferenceError) and `validateCertificate` set the stray `validated` status
+// that no longer exists in the lifecycle. The proper review-gated issue flow
+// (POST /documents/:id/issue -> issue_certificate) is (re)built in P3 behind the
+// sorobanAdapter, enforcing the Approved/ApprovedWithRecommendations gate (gap #2).
+// ---------------------------------------------------------------------------
 
 module.exports = {
   createCertificate,
@@ -801,7 +697,5 @@ module.exports = {
   ownerAddress: sorobanService.ownerAddress, // direct passthrough
   createWallet,
   fundWallet,
-  validateCertificate,
-  issueCertificate,
   getCertificate,
 };
