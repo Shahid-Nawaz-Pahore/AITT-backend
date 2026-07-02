@@ -14,14 +14,19 @@ const IS_DISK_UPLOAD = (typeof process.env.USE_DISK_UPLOAD === 'undefined')
   ? true
   : (String(process.env.USE_DISK_UPLOAD).toLowerCase() === 'true');
 
-// ensure directory exists only when disk upload is enabled
-if (IS_DISK_UPLOAD) {
+// Ensure the directory exists only when disk upload is enabled. On a read-only
+// filesystem (e.g. Vercel serverless, where only /tmp is writable) mkdir throws
+// at import time — degrade to in-memory storage instead of crashing the whole
+// app. `useDisk` is the EFFECTIVE mode after this check and is what the rest of
+// the module (and consumers, via the export) rely on.
+let useDisk = IS_DISK_UPLOAD;
+if (useDisk) {
   try {
     fs.mkdirSync(DEST_DIR, { recursive: true, mode: 0o750 });
   } catch (err) {
-    // If mkdir fails, throw so app won't run in an inconsistent state
-    // (logging isn't available here - but throwing is appropriate)
-    throw new Error(`Failed to create upload directory ${DEST_DIR}: ${err.message}`);
+    useDisk = false;
+    // eslint-disable-next-line no-console
+    console.warn(`[upload] cannot create ${DEST_DIR} (${err.message}); falling back to in-memory storage`);
   }
 }
 
@@ -37,7 +42,7 @@ function secureFilename(originalName) {
 }
 
 let storage;
-if (IS_DISK_UPLOAD) {
+if (useDisk) {
   storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, DEST_DIR),
     filename: (req, file, cb) => cb(null, secureFilename(file.originalname))
@@ -64,5 +69,5 @@ module.exports = {
   uploadSingle: (field = 'file') => upload.single(field),
   DEST_DIR,
   CERT_UPLOAD_DIR,
-  IS_DISK_UPLOAD
+  IS_DISK_UPLOAD: useDisk // effective mode (may have degraded to memory on a read-only FS)
 };
