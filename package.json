@@ -9,17 +9,19 @@
     "test": "cross-env NODE_ENV=test jest --runInBand",
     "test:unit": "cross-env NODE_ENV=test jest --runInBand --testPathPattern=__tests__/.*\\.unit\\.test\\.js$",
     "test:int": "cross-env NODE_ENV=test jest --runInBand --testPathPattern=__tests__/.*\\.int\\.test\\.js$",
+    "test:live": "cross-env NODE_ENV=test SOROBAN_ADAPTER=real jest --runInBand --config jest.live.config.js",
     "lint": "echo \"Run your linter\""
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.1.1",
+    "@stellar/stellar-sdk": "14.1.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "express": "^4.18.2",
+    "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^6.7.0",
     "helmet": "^7.0.0",
     "jsonwebtoken": "^9.0.0",

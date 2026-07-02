@@ -59,6 +59,8 @@ function getConfig() {
     txTimeoutMs: Number(process.env.SOROBAN_TX_TIMEOUT_MS || 60000),
     pollIntervalMs: Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS || 1000),
     pollMaxIntervalMs: Number(process.env.SOROBAN_TX_POLL_MAX_MS || 5000),
+    // tx_bad_seq retry: extra rebuild+resubmit attempts with a fresh sequence.
+    txMaxRetries: Number(process.env.SOROBAN_TX_MAX_RETRIES || 3),
   };
   return _config;
 }
@@ -92,6 +94,9 @@ const u64ScVal = (n) => nativeToScVal(BigInt(n), { type: 'u64' });
 const symbolScVal = (s) => nativeToScVal(s, { type: 'symbol' });
 function bytesN32ScVal(hexOrBuf) {
   const buf = Buffer.isBuffer(hexOrBuf) ? hexOrBuf : Buffer.from(String(hexOrBuf).replace(/^0x/, ''), 'hex');
+  if (buf.length !== 32) {
+    throw new AppError(400, `BytesN<32> expects 32 bytes, got ${buf.length} (input: ${String(hexOrBuf).slice(0, 12)}…)`);
+  }
   return nativeToScVal(buf, { type: 'bytes' });
 }
 // A Soroban contracttype enum is encoded as a vec: [Symbol(variant), ...payload].
@@ -157,61 +162,103 @@ async function waitForTransaction(server, hash, opts = {}) {
 // ---------------------------------------------------------------------------
 // Write / read tx flows
 // ---------------------------------------------------------------------------
+// Pull the result code name (e.g. 'txBadSeq') out of a sendTransaction
+// errorResult (an xdr.TransactionResult). Best-effort; null if it can't read it.
+function txErrorName(errorResult) {
+  try {
+    const name = errorResult && errorResult.result && errorResult.result().switch().name;
+    return name || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Result codes that are safe to retry by rebuilding with a fresh sequence.
+const RETRYABLE_TX_ERRORS = new Set(['txBadSeq']);
+
+const isBadSeqError = (err) =>
+  /badseq|bad_seq|txbadseq/i.test(String((err && (err.details || err.message)) || ''));
+
 /**
  * sendTx(method, args, signerKP?) — build, prepare, simulate, sign, send, and
  * wait (bounded) for confirmation. Defaults to custodial signing (serviceKP).
+ *
+ * Per-attempt the source account (sequence) is re-fetched, so a `tx_bad_seq`
+ * (stale sequence under back-to-back custodial submits) is retried up to
+ * cfg.txMaxRetries times before surfacing.
  */
 async function sendTx(method, args = [], signerKP = null) {
   const cfg = getConfig();
   const { server, contract, serviceKP } = getClients();
   const kp = signerKP || serviceKP;
   const startedAt = Date.now();
+  const maxAttempts = Math.max(1, Number(cfg.txMaxRetries || 0) + 1);
 
-  try {
-    logger.info('sendTx start', { method, argCount: args.length, signer: kp.publicKey().slice(0, 8) });
-    const src = await server.getAccount(kp.publicKey());
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      logger.info('sendTx start', { method, argCount: args.length, signer: kp.publicKey().slice(0, 8), attempt });
+      // Fresh sequence each attempt (the bad-seq fix).
+      const src = await server.getAccount(kp.publicKey());
 
-    let tx = new TransactionBuilder(src, { fee: BASE_FEE, networkPassphrase: cfg.NETWORK_PASSPHRASE })
-      .addOperation(contract.call(method, ...args))
-      .setTimeout(30)
-      .build();
+      let tx = new TransactionBuilder(src, { fee: BASE_FEE, networkPassphrase: cfg.NETWORK_PASSPHRASE })
+        .addOperation(contract.call(method, ...args))
+        .setTimeout(30)
+        .build();
 
-    tx = await server.prepareTransaction(tx);
+      // prepareTransaction simulates + assembles the Soroban footprint and the
+      // resource fee (BASE_FEE is only the inclusion fee).
+      tx = await server.prepareTransaction(tx);
 
-    const sim = await server.simulateTransaction(tx);
-    const simErr = sim?.error ?? sim?.result?.err;
-    if (!sim || simErr) {
-      throw new AppError(502, `Simulation failed for ${method}`, JSON.stringify(simErr ?? sim ?? {}).slice(0, 300));
+      const sim = await server.simulateTransaction(tx);
+      const simErr = sim?.error ?? sim?.result?.err;
+      if (!sim || simErr) {
+        throw new AppError(502, `Simulation failed for ${method}`, JSON.stringify(simErr ?? sim ?? {}).slice(0, 300));
+      }
+
+      tx.sign(kp);
+
+      const sendResp = await server.sendTransaction(tx);
+      if (sendResp.errorResult) {
+        const name = txErrorName(sendResp.errorResult);
+        if (RETRYABLE_TX_ERRORS.has(name) && attempt < maxAttempts) {
+          logger.warn('sendTx retryable submit error — refetching sequence', { method, code: name, attempt });
+          await sleep(cfg.pollIntervalMs);
+          continue;
+        }
+        throw new AppError(502, `Transaction submission failed for ${method}`, `${name || 'submit error'}: ${JSON.stringify(safeValue(sendResp.errorResult)).slice(0, 250)}`);
+      }
+
+      const txResp = await waitForTransaction(server, sendResp.hash, {
+        timeoutMs: cfg.txTimeoutMs,
+        pollIntervalMs: cfg.pollIntervalMs,
+        pollMaxIntervalMs: cfg.pollMaxIntervalMs,
+      });
+
+      const receipt = {
+        hash: sendResp.hash,
+        status: txResp.status,
+        ledger: txResp.ledger,
+        feeCharged: txResp.feeCharged,
+        latencyMs: Date.now() - startedAt,
+        returnValue: txResp.returnValue ? safeValue(scValToNative(txResp.returnValue)) : null,
+        source: 'real',
+      };
+      logger.info('sendTx success', { method, hash: receipt.hash, status: receipt.status, latencyMs: receipt.latencyMs });
+      return receipt;
+    } catch (err) {
+      lastErr = err;
+      // A bad-seq can also surface as a FAILED tx from waitForTransaction.
+      if (isBadSeqError(err) && attempt < maxAttempts) {
+        logger.warn('sendTx retry after bad-seq failure', { method, attempt });
+        await sleep(cfg.pollIntervalMs);
+        continue;
+      }
+      logger.error('sendTx failed', { method, message: err?.message?.slice?.(0, 200) ?? String(err) });
+      throw err instanceof AppError ? err : new AppError(502, `sendTx failed for ${method}`, err.message ?? String(err));
     }
-
-    tx.sign(kp);
-
-    const sendResp = await server.sendTransaction(tx);
-    if (sendResp.errorResult) {
-      throw new AppError(502, `Transaction submission failed for ${method}`, JSON.stringify(sendResp.errorResult).slice(0, 300));
-    }
-
-    const txResp = await waitForTransaction(server, sendResp.hash, {
-      timeoutMs: cfg.txTimeoutMs,
-      pollIntervalMs: cfg.pollIntervalMs,
-      pollMaxIntervalMs: cfg.pollMaxIntervalMs,
-    });
-
-    const receipt = {
-      hash: sendResp.hash,
-      status: txResp.status,
-      ledger: txResp.ledger,
-      feeCharged: txResp.feeCharged,
-      latencyMs: Date.now() - startedAt,
-      returnValue: txResp.returnValue ? safeValue(scValToNative(txResp.returnValue)) : null,
-      source: 'real',
-    };
-    logger.info('sendTx success', { method, hash: receipt.hash, status: receipt.status, latencyMs: receipt.latencyMs });
-    return receipt;
-  } catch (err) {
-    logger.error('sendTx failed', { method, message: err?.message?.slice?.(0, 200) ?? String(err) });
-    throw err instanceof AppError ? err : new AppError(502, `sendTx failed for ${method}`, err.message ?? String(err));
   }
+  throw lastErr instanceof AppError ? lastErr : new AppError(502, `sendTx failed for ${method}`, String(lastErr));
 }
 
 /**

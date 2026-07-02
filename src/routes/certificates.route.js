@@ -6,7 +6,9 @@ const { requireAuth, authenticateOptional } = require('../middlewares/auth.middl
 // ==================== CRUD OPERATIONS (Super Admin Only) ====================
 
 // GET all certificates (super_admin only) - with pagination, filtering, search
-router.get('/admin/all', certificatesController.getAllCertificates);
+// SECURITY (audit C3): this admin endpoint was missing its auth guard, exposing
+// the entire certificate collection to anyone. Now super_admin-only.
+router.get('/admin/all', requireAuth(['super_admin']), certificatesController.getAllCertificates);
 
 // GET single certificate by ID (super_admin only) - with full details and relations
 router.get('/admin/:id', requireAuth(['super_admin']), certificatesController.getCertificateById);

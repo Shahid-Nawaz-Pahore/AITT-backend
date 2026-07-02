@@ -230,9 +230,10 @@ async function rejectProposal({ id, adminUserId = null }) {
 async function listProposals({ page = 1, limit = 20, status = null, type = null } = {}) {
   page = Math.max(1, parseInt(page, 10) || 1);
   limit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  // Only accept known string enum values (audit #8: reject injected objects).
   const filter = {};
-  if (status) filter.status = status;
-  if (type) filter.type = type;
+  if (typeof status === 'string' && Proposal.PROPOSAL_STATUSES.includes(status)) filter.status = status;
+  if (typeof type === 'string' && Proposal.PROPOSAL_TYPES.includes(type)) filter.type = type;
   const [items, total] = await Promise.all([
     Proposal.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
     Proposal.countDocuments(filter),

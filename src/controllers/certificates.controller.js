@@ -272,21 +272,25 @@ async function getAllCertificates(req, res, next) {
       sortOrder = 'desc'
     } = req.query;
 
+    // audit #8: only accept string scalars in filters (reject injected objects).
     const filters = {};
-    if (status) filters.status = status;
-    if (companyId) filters.companyId = companyId;
-    if (search) {
+    if (typeof status === 'string') filters.status = status;
+    if (typeof companyId === 'string') filters.companyId = companyId;
+    if (typeof search === 'string' && search.trim()) {
+      // Escape regex metacharacters so user input can't craft a ReDoS pattern.
+      const safe = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       filters.$or = [
-        { certificateName: { $regex: search, $options: 'i' } },
-        { subject: { $regex: search, $options: 'i' } },
-        { originalFilename: { $regex: search, $options: 'i' } }
+        { certificateName: { $regex: safe, $options: 'i' } },
+        { subject: { $regex: safe, $options: 'i' } },
+        { originalFilename: { $regex: safe, $options: 'i' } }
       ];
     }
 
     const result = await certificateService.getAllCertificates({
       filters,
-      page: parseInt(page, 10),
-      limit: parseInt(limit, 10),
+      page: Math.max(1, parseInt(page, 10) || 1),
+      // audit C3: cap page size to prevent full-collection dumps / DoS.
+      limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 50)),
       sortBy,
       sortOrder
     });

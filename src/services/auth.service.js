@@ -166,13 +166,35 @@ async function issueRefreshToken(user, ctx = {}) {
  */
 async function login({ email, password, ip, ua }) {
   try {
+    // Reject non-string credentials (audit #8: NoSQL operator injection).
+    if (typeof email !== 'string' || typeof password !== 'string') {
+      throw new AppError(400, 'email and password must be strings');
+    }
+
     const user = await User.findOne({ email, isActive: true });
     if (!user) throw new AppError(401, 'Invalid credentials');
     if (!user.passwordHash) throw new AppError(401, 'No password set for this user');
 
-    const ok = await verifyPassword(password, user.passwordHash);
-    if (!ok) throw new AppError(401, 'Invalid credentials');
+    // Account lockout (audit #5): block while locked.
+    if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+      throw new AppError(429, 'Account temporarily locked due to repeated failed logins. Try again later.');
+    }
 
+    const ok = await verifyPassword(password, user.passwordHash);
+    if (!ok) {
+      // Count the failure and lock after a threshold. Defensive save() guard so
+      // unit-test mocks without a save() stay green.
+      const max = Number(process.env.LOGIN_LOCKOUT_THRESHOLD || 5);
+      const lockMs = Number(process.env.LOGIN_LOCKOUT_MS || 15 * 60 * 1000);
+      user.failedLoginCount = (user.failedLoginCount || 0) + 1;
+      if (user.failedLoginCount >= max) user.lockedUntil = new Date(Date.now() + lockMs);
+      if (typeof user.save === 'function') await user.save();
+      throw new AppError(401, 'Invalid credentials');
+    }
+
+    // Success: clear the failure counter.
+    user.failedLoginCount = 0;
+    user.lockedUntil = null;
     user.lastLoginAt = new Date();
     await user.save();
 

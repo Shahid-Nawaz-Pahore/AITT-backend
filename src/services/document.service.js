@@ -21,7 +21,7 @@ const logger = require('../utils/logger');
 const { getAdapter, reviewDecisionToContract } = require('./sorobanAdapter');
 const indexer = require('./indexer.service');
 const { isIssuable, latestReview } = require('../utils/composeStatus');
-const { REVIEW_DECISIONS } = require('../utils/statusMap');
+const { REVIEW_DECISIONS, DOC_STATUSES } = require('../utils/statusMap');
 const { decryptSecret } = require('../utils/wallet');
 const { toDocItem } = require('../utils/serializers');
 const { isCompany } = require('../utils/roles');
@@ -94,7 +94,8 @@ async function listDocuments({ user, page = 1, limit = 20, status = null }) {
     if (!user.companyId) return { items: [], total: 0, page, limit };
     filter.companyId = user.companyId;
   }
-  if (status) filter.status = status;
+  // Only accept a known string status (audit #8: reject injected objects).
+  if (typeof status === 'string' && DOC_STATUSES.includes(status)) filter.status = status;
 
   const [docs, total] = await Promise.all([
     Certificate.find(filter)

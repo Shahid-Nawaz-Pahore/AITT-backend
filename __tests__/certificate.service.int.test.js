@@ -150,7 +150,8 @@ describe('Certificate Service', () => {
 
       // Verify database records
       const certCount = await Certificate.countDocuments();
-      expect(certCount).toBe(1);
+      expect(certCount).toB
+      e(1);
 
       const eventCount = await CertificateEvent.countDocuments();
       expect(eventCount).toBe(1);

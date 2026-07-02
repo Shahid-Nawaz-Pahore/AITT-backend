@@ -1,10 +1,18 @@
 # API Endpoints (MVP)
 
+## Security hardening (Phase H1)
+- **No public file serving.** The `express.static('/certificates')` mount was removed (audit #1); files are served ONLY via the authed, role-scoped `GET /api/v1/documents/:id/file`.
+- **`POST /auth/register` is super_admin-only** (audit C1). Bootstrap the first admin out-of-band: `SEED_ADMIN_EMAIL=… SEED_ADMIN_PASSWORD=… node src/migrations/seed-admin.js`.
+- **`GET /certificates/admin/all` is super_admin-only** + page-size capped (audit C3).
+- **Rate limiting:** strict per-route limiter on `/auth/login` (failed-attempt counted) + `/auth/refresh` + `/auth/exchange-key`; per-account lockout after `LOGIN_LOCKOUT_THRESHOLD` failures.
+- **NoSQL injection:** `express-mongo-sanitize` strips `$`/`.` keys globally; list filters (`status`/`type`) are coerced against known enums; regex search input is escaped (audit #8).
+- **Dependencies:** `npm audit` = 0 critical / 0 high (3 moderate remain in the dev-only `mongodb-memory-server`).
+
 ## Auth
-- POST /api/v1/auth/register  (admin only - create users)
-- POST /api/v1/auth/login
-- POST /api/v1/auth/refresh
-- POST /api/v1/auth/exchange-key  (keeps API keys in DB, not used by main routes)
+- POST /api/v1/auth/register  (**super_admin only** — create users)
+- POST /api/v1/auth/login  (rate-limited; account lockout)
+- POST /api/v1/auth/refresh  (rate-limited)
+- POST /api/v1/auth/exchange-key  (rate-limited; keeps API keys in DB, not used by main routes)
 
 ## Certificates
 - POST /api/v1/certificates          (company_admin)

@@ -18,7 +18,11 @@ const userSchema = new mongoose.Schema({
   subAdminId: { type: mongoose.Schema.Types.ObjectId, ref: 'SubAdmin', default: null },
   walletAddress: { type: String, index: true, default: null },
   isActive: { type: Boolean, default: true },
-  lastLoginAt: { type: Date }
+  lastLoginAt: { type: Date },
+  // Brute-force lockout (audit #5): incremented on failed login, cleared on
+  // success; lockedUntil blocks login while in the future.
+  failedLoginCount: { type: Number, default: 0 },
+  lockedUntil: { type: Date, default: null }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

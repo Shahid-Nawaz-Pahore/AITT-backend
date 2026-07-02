@@ -19,6 +19,12 @@
 const rpc = require('./rpc');
 const AppError = require('../../utils/AppError');
 const { ONCHAIN_ACTION_TYPES } = require('./stub');
+const {
+  decodeDocument,
+  decodeVerifiedDocument,
+  decodeReview,
+  decodeProposal,
+} = require('./decode');
 
 const signerFromOpts = (o = {}) => (o.signerSecret ? rpc.Keypair.fromSecret(o.signerSecret) : null);
 
@@ -42,15 +48,18 @@ const realAdapter = {
   kind: 'real',
 
   // ---- Reads ----
+  // Scalars (address/u32/bool) decode cleanly via scValToNative; structs +
+  // enums + u64 are normalized through decode.js so every return is shaped
+  // EXACTLY like the stub (see decode.js header).
   mainAdminAddress: () => rpc.fetchValue('main_admin_address', []),
   governanceThreshold: async () => Number(await rpc.fetchValue('governance_threshold', [])),
   isSubAdmin: async (addr) => !!(await rpc.fetchValue('is_sub_admin_public', [rpc.addressScVal(addr)])),
   isWhitelisted: async (addr) => !!(await rpc.fetchValue('is_whitelisted', [rpc.addressScVal(addr)])),
-  readDocument: (hash) => rpc.fetchValue('read_document', [rpc.stringScVal(hash)]),
-  verifyDocument: (hash) => rpc.fetchValue('verify_document', [rpc.stringScVal(hash)]),
-  readReview: (docHash, reviewer) =>
-    rpc.fetchValue('read_review', [rpc.stringScVal(docHash), rpc.addressScVal(reviewer)]),
-  readProposal: (id) => rpc.fetchValue('read_proposal', [rpc.u64ScVal(id)]),
+  readDocument: async (hash) => decodeDocument(await rpc.fetchValue('read_document', [rpc.stringScVal(hash)])),
+  verifyDocument: async (hash) => decodeVerifiedDocument(await rpc.fetchValue('verify_document', [rpc.stringScVal(hash)])),
+  readReview: async (docHash, reviewer) =>
+    decodeReview(await rpc.fetchValue('read_review', [rpc.stringScVal(docHash), rpc.addressScVal(reviewer)])),
+  readProposal: async (id) => decodeProposal(await rpc.fetchValue('read_proposal', [rpc.u64ScVal(id)])),
 
   // ---- Writes ----
   init: (o = {}) =>
