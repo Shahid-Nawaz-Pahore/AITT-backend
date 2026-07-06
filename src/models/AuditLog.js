@@ -11,6 +11,9 @@ const auditLogSchema = new mongoose.Schema({
   method: { type: String, index: true },
   path: { type: String, index: true },
   statusCode: { type: Number },
+  // 'success' (a completed mutation) | 'denied' (auth/authz failure — D13) |
+  // 'error' (server error on a mutation). Indexed so security queries are cheap.
+  outcome: { type: String, enum: ['success', 'denied', 'error'], default: 'success', index: true },
   ip: { type: String },
   durationMs: { type: Number },
 }, { timestamps: true });

@@ -36,10 +36,11 @@ const certSchema = new mongoose.Schema({
   mimeType: { type: String },
   size: { type: Number },
 
-  // local storage info
+  // File storage descriptor (H4 #11 — pluggable via services/storage.service).
   storage: {
-    provider: { type: String, enum: ['local','s3','minio','gridfs'], default: 'local' },
-    path: { type: String },     // absolute path on disk (never client-controlled)
+    provider: { type: String, enum: ['local', 's3', 'minio', 'gridfs', 'memory'], default: 'local' },
+    key: { type: String },      // driver-specific id (GridFS ObjectId / memory key / disk filename)
+    path: { type: String },     // absolute path on disk (disk driver only; never client-controlled)
     publicUrl: { type: String } // e.g., https://yourdomain.com/certificates/<filename>
   },
 

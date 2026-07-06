@@ -1,0 +1,1852 @@
+{
+  "info": {
+    "_postman_id": "cc640e68-c89e-4e5b-b3e0-e504221e4509",
+    "name": "AITT Compliance Backend API",
+    "description": "AITT (AI Transparency Token) compliance-certification platform. Base URL and JWT token are collection variables. Run Auth > Login first — it auto-saves the accessToken into {{token}}, so every other request is authorized automatically.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "26219323",
+    "_collection_link": "https://go.postman.co/collection/26219323-cc640e68-c89e-4e5b-b3e0-e504221e4509?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.accessToken) { pm.collectionVariables.set('token', b.accessToken); }",
+                  "if (b.refreshToken) { pm.collectionVariables.set('refreshToken', b.refreshToken); }",
+                  "pm.test('login ok', () => pm.response.code === 200);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@aitt.io\",\n  \"password\": \"YourStrongPass12+\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"reviewer@aitt.io\",\n  \"password\": \"StrongPass12+\",\n  \"role\": \"sub_admin\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Exchange API key",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiKey\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/exchange-key",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "exchange-key"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "item": [
+        {
+          "name": "Submit document",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "value": null
+                },
+                {
+                  "key": "subject",
+                  "value": "Q4 Audit Report",
+                  "type": "text"
+                },
+                {
+                  "key": "filename",
+                  "value": "q4-audit.pdf",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/documents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List documents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/documents?status=&companyId=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": ""
+                },
+                {
+                  "key": "companyId",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/documents/{{documentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Download document file",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/documents/{{documentId}}/file",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "file"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify document by id (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/documents/{{documentId}}/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "verify"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify document by hash (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/documents/verify/{{docHash}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "verify",
+                "{{docHash}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Review document (reviewer)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"Approved\",\n  \"complianceScore\": 85,\n  \"comment\": \"Looks good\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/documents/{{documentId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "review"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Issue certificate (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expiryAt\": \"2027-01-01T00:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/documents/{{documentId}}/issue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "issue"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Certificates",
+      "item": [
+        {
+          "name": "Create certificate",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "certificateName",
+                  "value": "ISO 27001",
+                  "type": "text"
+                },
+                {
+                  "key": "subject",
+                  "value": "Acme Corp",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "value": null
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/certificates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "certificates"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Check issued (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hash\": \"{{docHash}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/certificates/check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "certificates",
+                "check"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get certificate (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/certificates/{{certificateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "certificates",
+                "{{certificateId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify certificate (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/certificates/{{certificateId}}/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "certificates",
+                "{{certificateId}}",
+                "verify"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List all (super_admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/certificates/admin/all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "certificates",
+                "admin",
+                "all"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get by id (super_admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/certificates/admin/{{certificateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "certificates",
+                "admin",
+                "{{certificateId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update (super_admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"certificateName\": \"Updated name\",\n  \"subject\": \"Acme Corp\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/certificates/admin/{{certificateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "certificates",
+                "admin",
+                "{{certificateId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete (super_admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/certificates/admin/{{certificateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "certificates",
+                "admin",
+                "{{certificateId}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Proposals",
+      "item": [
+        {
+          "name": "Create proposal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"RevokeCertificate\",\n  \"title\": \"Revoke cert for doc\",\n  \"description\": \"Reason...\",\n  \"targetRef\": \"{{docHash}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/proposals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "proposals"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List proposals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/proposals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "proposals"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get proposal",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/proposals/{{proposalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "proposals",
+                "{{proposalId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Sign proposal",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/proposals/{{proposalId}}/sign",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "proposals",
+                "{{proposalId}}",
+                "sign"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reject proposal (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/proposals/{{proposalId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "proposals",
+                "{{proposalId}}",
+                "reject"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Governance",
+      "item": [
+        {
+          "name": "Get governance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/governance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "governance"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Set threshold (super_admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"required\": 2,\n  \"total\": 3\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/governance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "governance"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Companies",
+      "item": [
+        {
+          "name": "Register company (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corp\",\n  \"email\": \"company@acme.io\",\n  \"password\": \"StrongPass12+\",\n  \"contactPhone\": \"+10000000000\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/companies/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "companies",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create company (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corp\",\n  \"email\": \"company@acme.io\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/companies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "companies"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List companies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "companies"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List companies with users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies/with-users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "companies",
+                "with-users"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get company",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies/{{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "companies",
+                "{{companyId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Approve company (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies/{{companyId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "companies",
+                "{{companyId}}",
+                "approve"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove company (super_admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies/{{companyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "companies",
+                "{{companyId}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Regulators",
+      "item": [
+        {
+          "name": "Create regulator (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"EU Regulator\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/regulators",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "regulators"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List regulators",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/regulators",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "regulators"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Users grouped",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/regulators/users-grouped",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "regulators",
+                "users-grouped"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get regulator",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/regulators/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "regulators",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Promote to regulator_admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/regulators/promote",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "regulators",
+                "promote"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Demote regulator_admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/regulators/demote",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "regulators",
+                "demote"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Sub-admins",
+      "item": [
+        {
+          "name": "Invite sub-admin (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Reviewer\",\n  \"email\": \"jane@aitt.io\",\n  \"password\": \"StrongPass12+\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sub-admins",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sub-admins"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List sub-admins",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sub-admins",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sub-admins"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Activate sub-admin",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sub-admins/:id/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sub-admins",
+                ":id",
+                "activate"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove sub-admin",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sub-admins/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sub-admins",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Frameworks",
+      "item": [
+        {
+          "name": "List frameworks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/frameworks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "frameworks"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get framework",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/frameworks/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "frameworks",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Templates",
+      "item": [
+        {
+          "name": "List templates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/templates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "templates"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get template",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/templates/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "templates",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Download template",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/templates/:id/download",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "templates",
+                ":id",
+                "download"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create template (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Audit template\",\n  \"description\": \"Standard audit\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/templates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "templates"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update template (super_admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/templates/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "templates",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove template (super_admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/templates/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "templates",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Alerts",
+      "item": [
+        {
+          "name": "List alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/alerts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "alerts"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create alert (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Certificate expiring soon\",\n  \"severity\": \"warning\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/alerts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "alerts"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Resolve alert",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/alerts/:id/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "alerts",
+                ":id",
+                "resolve"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "List notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark all read",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "read-all"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark one read",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/:id/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                ":id",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "id"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Soroban (chain)",
+      "item": [
+        {
+          "name": "Owner address (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/soroban/owner",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "owner"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Read document (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/soroban/read/{{docHash}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "read",
+                "{{docHash}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/soroban/verify/{{docHash}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "verify",
+                "{{docHash}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Is whitelisted (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/soroban/is_whitelisted/:address",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "is_whitelisted",
+                ":address"
+              ],
+              "variable": [
+                {
+                  "key": "address"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Store document (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Q4 Audit\",\n  \"hash\": \"{{docHash}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/soroban/store_document",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "store_document"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Whitelist address (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"G...\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/soroban/whitelist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "whitelist"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove whitelist (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"G...\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/soroban/remove_whitelist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "remove_whitelist"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Transfer ownership (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newOwner\": \"G...\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/soroban/transfer_ownership",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "transfer_ownership"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create wallet (helper)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/soroban/helpers/create_wallet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "helpers",
+                "create_wallet"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Fund wallet (helper)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"publicKey\": \"G...\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/soroban/helpers/fund_wallet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "helpers",
+                "fund_wallet"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Init contract (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/soroban/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "soroban",
+                "init"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Run expiry job (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"warnWithinDays\": 30\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/jobs/expiry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "jobs",
+                "expiry"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List audit (super_admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/audit?page=1&limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "audit"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check (root)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://aitt-backend.vercel.app/",
+              "protocol": "https",
+              "host": [
+                "aitt-backend",
+                "vercel",
+                "app"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://aitt-backend.vercel.app/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "documentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "certificateId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "proposalId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "companyId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "docHash",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

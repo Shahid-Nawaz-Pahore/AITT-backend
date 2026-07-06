@@ -7,15 +7,17 @@
 // Ensure a clean module registry and create mocks BEFORE requiring the service.
 jest.resetModules();
 
-// Mock soroban.service BEFORE requiring the certificate service so its top-level code never runs.
-jest.doMock('../src/services/soroban.service', () => {
-  return {
-    readDocument: jest.fn(),
-    storeDocument: jest.fn(),
-    verifyDocument: jest.fn(),
-    isWhitelisted: jest.fn()
-  };
-});
+// Legacy chain access now flows through the sorobanAdapter (soroban.service was
+// retired). Mock getAdapter() to return an in-test fake adapter BEFORE requiring
+// the certificate service.
+const mockAdapter = {
+  readDocument: jest.fn(),
+  storeDocument: jest.fn(),
+  verifyDocument: jest.fn(),
+  isWhitelisted: jest.fn(),
+  mainAdminAddress: jest.fn().mockResolvedValue('GADMIN000000000000000000000000000000000000000000000000'),
+};
+jest.doMock('../src/services/sorobanAdapter', () => ({ getAdapter: () => mockAdapter }));
 
 // Mock models (Certificate, CertificateEvent, Web3Tx)
 jest.doMock('../src/models/Certificate', () => {
@@ -57,7 +59,7 @@ jest.doMock('fs', () => ({
 }));
 
 // Now require the mocked modules and the real service module
-const sorobanService = require('../src/services/soroban.service');
+const sorobanService = mockAdapter; // tests reference the mocked adapter as `sorobanService`
 const Certificate = require('../src/models/Certificate');
 const CertificateEvent = require('../src/models/CertificateEvent');
 const Web3Tx = require('../src/models/Web3Tx');
@@ -117,7 +119,8 @@ describe('certificate.service (unit)', () => {
         requestedByUserId: 'u'
       })).rejects.toMatchObject({ statusCode: 502 });
 
-      expect(sorobanService.storeDocument).toHaveBeenCalledWith('C', 'abc', null);
+      // Adapter is called as storeDocument(actorAddress, name, hash, { signerSecret }).
+      expect(sorobanService.storeDocument).toHaveBeenCalledWith(expect.any(String), 'C', 'abc', { signerSecret: null });
     });
 
     it('throws 500 when storeDocument returns non-success receipt', async () => {

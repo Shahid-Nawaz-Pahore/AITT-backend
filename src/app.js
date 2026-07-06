@@ -34,17 +34,22 @@ app.use(
 );
 
 // --- uploads config & ensure directories exist ---
+// Only pre-create the disk upload dir when disk storage is actually selected
+// (STORAGE_DRIVER=disk or legacy USE_DISK_UPLOAD=true). On a read-only FS or in
+// GridFS/memory mode this is skipped so boot never noisily fails (H4 #11).
 const UPLOAD_BASE_DIR = process.env.UPLOAD_BASE_DIR || '/var/www/app2/uploads';
 const CERT_UPLOAD_DIR = process.env.CERT_UPLOAD_DIR || 'certificates';
 const CERT_DIR = path.join(UPLOAD_BASE_DIR, CERT_UPLOAD_DIR);
+const diskSelected = String(process.env.STORAGE_DRIVER).toLowerCase() === 'disk'
+  || String(process.env.USE_DISK_UPLOAD).toLowerCase() === 'true';
 
-// create dirs on startup (safe even if already exist)
-try {
-  fs.mkdirSync(CERT_DIR, { recursive: true, mode: 0o750 });
-  logger.info(`Ensured upload directory exists: ${CERT_DIR}`);
-} catch (e) {
-  logger.error('Failed to ensure upload directory', { error: e && e.message });
-  // allow process to continue — multer will error if path is not writable
+if (diskSelected) {
+  try {
+    fs.mkdirSync(CERT_DIR, { recursive: true, mode: 0o750 });
+    logger.info(`Ensured upload directory exists: ${CERT_DIR}`);
+  } catch (e) {
+    logger.warn('Could not pre-create upload directory (storage may fall back)', { error: e && e.message });
+  }
 }
 
 // SECURITY (audit #1): the public `express.static('/certificates', CERT_DIR)`
@@ -52,7 +57,23 @@ try {
 // auth. Files are now served ONLY through the authenticated, role-scoped
 // endpoint GET /api/v1/documents/:id/file (document.controller.downloadDocumentFile).
 
-// health
+// --- Liveness / readiness (D10) ---
+const health = require('./services/health.service');
+// Liveness: process is up. No dependency checks — used by the orchestrator to
+// know whether to RESTART the container.
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
+// Readiness: dependencies are reachable. Used by the LB to know whether to send
+// traffic. Returns 503 when Mongo or (in real mode) the RPC is down.
+app.get('/ready', async (req, res) => {
+  try {
+    const r = await health.readiness();
+    res.status(r.ready ? 200 : 503).json(r);
+  } catch (err) {
+    res.status(503).json({ ready: false, error: err.message });
+  }
+});
+
+// root
 app.get('/', (req, res) => res.send('Soroban Compliance Backend API running'));
 
 // API routes

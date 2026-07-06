@@ -2,9 +2,12 @@ const express = require('express');
 const router = express.Router();
 const companyController = require('../controllers/company.controller');
 const { requireAuth } = require('../middlewares/auth.middleware');
+const { sensitiveLimiter } = require('../middlewares/rateLimiters');
 
 // Public self-registration (frontend addCompany) -> PENDING company + admin login.
-router.post('/register', companyController.registerCompany);
+// Rate-limited (E-audit M5): each call creates a Company + User + a custodial
+// keypair, so it must be throttled against mass/abusive registration.
+router.post('/register', sensitiveLimiter, companyController.registerCompany);
 
 // Create new company (admin-managed)
 router.post('/', requireAuth(['super_admin']), companyController.createCompany);

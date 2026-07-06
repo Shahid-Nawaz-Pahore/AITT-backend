@@ -17,6 +17,7 @@ const Certificate = require('../models/Certificate');
 const Company = require('../models/Company');
 const SubAdmin = require('../models/SubAdmin');
 const Web3Tx = require('../models/Web3Tx');
+const Outbox = require('../models/Outbox');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
 const {
@@ -132,10 +133,9 @@ async function mirrorIssuedCertificate({ metadataHash, expiryUnix = null, expiry
  * decision, complianceScore, comment?, commentHash?, date? }.
  */
 async function mirrorReview({ metadataHash, review, receipt }) {
-  const cert = await Certificate.findOne({ metadataHash });
+  const cert = await Certificate.findOne({ metadataHash }).select('_id');
   if (!cert) throw new AppError(404, 'Certificate not found for review mirror', metadataHash);
 
-  const key = review.reviewerWallet || review.reviewer || (review.reviewerId && String(review.reviewerId));
   const entry = {
     reviewer: review.reviewer,
     reviewerId: review.reviewerId || null,
@@ -148,23 +148,49 @@ async function mirrorReview({ metadataHash, review, receipt }) {
     date: review.date ? new Date(review.date) : new Date(),
   };
 
-  // Replace an existing review by the same reviewer; else append. Match on the
-  // strongest available identity FIRST — wallet, then id, then (last resort)
-  // display name — so two officers who share a display name don't collide.
-  const idx = cert.reviews.findIndex((r) => {
-    if (review.reviewerWallet && r.reviewerWallet) return r.reviewerWallet === review.reviewerWallet;
-    if (review.reviewerId && r.reviewerId) return String(r.reviewerId) === String(review.reviewerId);
-    return !!(r.reviewer && review.reviewer && r.reviewer === review.reviewer);
-  });
-  if (idx >= 0) cert.reviews[idx] = entry;
-  else cert.reviews.push(entry);
+  // CONCURRENCY (H3 #9-adjacent): two officers reviewing the same document at the
+  // same instant previously raced on a load-modify-save of the whole reviews[]
+  // array, silently dropping one review. Now the array mutation is ATOMIC:
+  //   1) replace an existing review by this reviewer (positional $set), or
+  //   2) push a new one — guarded by $ne so a concurrent insert can't double-add.
+  // Identity precedence: wallet > id > name (two officers sharing a display name
+  // never collide). Then derived fields are recomputed with a targeted $set so a
+  // concurrent push is never clobbered.
+  const idField = review.reviewerWallet ? 'reviews.reviewerWallet'
+    : review.reviewerId ? 'reviews.reviewerId'
+      : 'reviews.reviewer';
+  const idValue = review.reviewerWallet || review.reviewerId || review.reviewer;
 
-  cert.chain = cert.chain || {};
-  if (receipt) cert.chain.txHashReview = receipt.hash;
-  recomputeCertificateFields(cert);
-  await cert.save();
-  logger.info('mirrorReview applied', { metadataHash: metadataHash.slice(0, 12), reviewerKey: key, status: cert.status, score: cert.complianceScore });
-  return cert;
+  // Set individual positional fields (`reviews.$.field`) rather than replacing
+  // the whole element — replacing `reviews.$` conflicts with Mongoose's injected
+  // `reviews.$.updatedAt` timestamp path.
+  const setOnUpdate = {};
+  for (const [k, v] of Object.entries(entry)) setOnUpdate[`reviews.$.${k}`] = v;
+  if (receipt && receipt.hash) setOnUpdate['chain.txHashReview'] = receipt.hash;
+
+  const updated = await Certificate.updateOne(
+    { _id: cert._id, [idField]: idValue },
+    { $set: setOnUpdate },
+  );
+  if (updated.matchedCount === 0) {
+    const update = { $push: { reviews: entry } };
+    if (receipt && receipt.hash) update.$set = { 'chain.txHashReview': receipt.hash };
+    await Certificate.updateOne({ _id: cert._id, [idField]: { $ne: idValue } }, update);
+  }
+
+  // Recompute derived status + overall score from the now-correct reviews array
+  // (targeted $set only — never rewrites reviews[], so no lost update).
+  const fresh = await Certificate.findById(cert._id);
+  const lifecycle = fresh.chain?.certificateStatus || 'Submitted';
+  const rev = latestReview(fresh.reviews);
+  const complianceScore = overallComplianceScore(fresh.reviews);
+  const status = composeStatus(lifecycle, rev ? rev.decision : null, { inReview: !!fresh.inReview });
+  await Certificate.updateOne({ _id: cert._id }, { $set: { status, complianceScore } });
+  fresh.status = status;
+  fresh.complianceScore = complianceScore;
+
+  logger.info('mirrorReview applied', { metadataHash: metadataHash.slice(0, 12), reviewerKey: String(idValue), status, score: complianceScore });
+  return fresh;
 }
 
 /**
@@ -205,24 +231,75 @@ async function mirrorSubAdminActivated({ subAdminId, receipt }) {
   return sa;
 }
 
+// Registry of replayable mirror operations (keys must match models/Outbox OPS).
+// Each takes a single object payload that includes `receipt`.
+const MIRRORS = {
+  mirrorStoredDocument,
+  mirrorIssuedCertificate,
+  mirrorReview,
+  mirrorRevocation,
+  mirrorCompanyApproved,
+  mirrorSubAdminActivated,
+};
+
+/** runMirror(op, payload, receipt) — dispatch a mirror by name (used by the
+ *  durable outbox path + the outbox processor on retry). Idempotent. */
+async function runMirror(op, payload = {}, receipt = null) {
+  const fn = MIRRORS[op];
+  if (!fn) throw new AppError(500, `runMirror: unknown mirror op '${op}'`);
+  return fn({ ...payload, receipt: receipt ?? payload.receipt });
+}
+
 /**
- * writeThrough — call an adapter write, persist the Web3Tx, then mirror DB.
+ * writeThrough — call an adapter write, durably record it, then mirror DB.
  *   adapter : the sorobanAdapter impl
  *   method  : adapter method name (e.g. 'storeDocument')
  *   args    : args array for the adapter method
  *   purpose : Web3Tx purpose
- *   mirror  : optional async (receipt) => {} that projects state onto the DB
+ *   mirror  : EITHER a durable descriptor { op, payload }  (RECOMMENDED — outbox
+ *             backed, self-heals on crash) OR a plain async (receipt)=>{} closure
+ *             (back-compat; no durability).
  *   meta    : { certificateId, proposalId, submittedByUserId, network, requestDump }
- * Returns { receipt, tx, mirrored }.
+ * Returns { receipt, tx, mirrored, outbox }.
+ *
+ * DURABILITY: for the descriptor form, an Outbox row is persisted BEFORE the
+ * mirror is attempted. On success it is marked done; on failure it stays pending
+ * and the error propagates (the caller sees a truthful failure) while the outbox
+ * processor retries the idempotent mirror until the DB converges — so a crash or
+ * transient DB error between chain-commit and mirror never loses the write.
  */
 async function writeThrough({ adapter, method, args = [], purpose, mirror = null, meta = {} }) {
   if (!adapter || typeof adapter[method] !== 'function') {
     throw new AppError(500, `writeThrough: adapter has no method '${method}'`);
   }
   const receipt = await adapter[method](...args);
+
+  // Durable descriptor form.
+  if (mirror && typeof mirror === 'object' && mirror.op) {
+    let outbox = null;
+    try {
+      outbox = await Outbox.create({ op: mirror.op, payload: mirror.payload || {}, receipt: receipt || null, purpose, status: 'pending' });
+    } catch (err) {
+      // Even if we can't persist the outbox row, still record + attempt the mirror.
+      logger.error('writeThrough: failed to persist outbox row (continuing)', { op: mirror.op, error: err.message });
+    }
+    const tx = await recordTx({ purpose, receipt, method, ...meta });
+    try {
+      const mirrored = await runMirror(mirror.op, mirror.payload, receipt);
+      if (outbox) await Outbox.updateOne({ _id: outbox._id }, { $set: { status: 'done', mirroredAt: new Date() } });
+      return { receipt, tx, mirrored, outbox };
+    } catch (err) {
+      // Leave the outbox row pending for the processor; surface the failure now.
+      logger.error('writeThrough: inline mirror failed — left pending in outbox for retry', { op: mirror.op, error: err.message });
+      if (outbox) await Outbox.updateOne({ _id: outbox._id }, { $set: { lastError: String(err.message).slice(0, 300) } });
+      throw err;
+    }
+  }
+
+  // Back-compat closure form (no durability).
   const tx = await recordTx({ purpose, receipt, method, ...meta });
   let mirrored = null;
-  if (mirror) mirrored = await mirror(receipt);
+  if (typeof mirror === 'function') mirrored = await mirror(receipt);
   return { receipt, tx, mirrored };
 }
 
@@ -237,4 +314,6 @@ module.exports = {
   mirrorCompanyApproved,
   mirrorSubAdminActivated,
   writeThrough,
+  runMirror,
+  MIRRORS,
 };

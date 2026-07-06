@@ -1,11 +1,30 @@
 // src/services/certificate.service.js
+// ---------------------------------------------------------------------------
+// Legacy certificate/admin surface. As of the production hardening (H3 #9) ALL
+// chain access here goes through the sorobanAdapter (getAdapter) — the legacy
+// soroban.service.js has been retired. The DB-only admin helpers (list / get /
+// update / delete) are unchanged; the chain-touching helpers are thin wrappers
+// over the adapter so `SOROBAN_ADAPTER=real` drives the real contract.
+// ---------------------------------------------------------------------------
 const Certificate = require('../models/Certificate');
 const CertificateEvent = require('../models/CertificateEvent');
 const Web3Tx = require('../models/Web3Tx');
-const sorobanService = require('./soroban.service');
+const { Keypair } = require('@stellar/stellar-sdk');
+const { getAdapter } = require('./sorobanAdapter');
+const { txStatusFromReceipt } = require('./indexer.service');
+const { generateWallet } = require('../utils/wallet');
+const funding = require('./funding.service');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
 const fs = require('fs');
+
+// A confirmed chain receipt across adapters: real => 'SUCCESS'; stub => 'simulated'.
+const receiptOk = (r) => !!r && (r.status === 'SUCCESS' || r.status === 'simulated' || r.source === 'stub');
+// The actor address for an adapter write: the signer's pubkey, else the service key's.
+async function actorAddress(signerSecret, adapter) {
+  if (signerSecret) return Keypair.fromSecret(signerSecret).publicKey();
+  return adapter.mainAdminAddress();
+}
 
 
 
@@ -30,12 +49,13 @@ async function createCertificate({
   if (!certificateName || !metadataHash || !subject) {
     throw new AppError(400, 'Missing required fields: certificateName, subject, metadataHash');
   }
-  
+
+  const adapter = getAdapter();
+
   // Check if document with same hash already exists on chain
   try {
     logger.info('Checking existing document on chain', { metadataHashShort: metadataHash.slice(0, 16) });
-    const existing = await sorobanService.readDocument(metadataHash);
-    console.log('Existing on chain:', existing);
+    const existing = await adapter.readDocument(metadataHash);
     if (existing) {
       throw new AppError(400, 'A document with the same metadataHash already exists on chain');
     }
@@ -54,16 +74,17 @@ async function createCertificate({
   });
 
   try {
-    // ---- Call Soroban (optionally with signerSecret) ----
+    // ---- Call the chain adapter (optionally with a specific signer) ----
     let receipt;
     try {
-      receipt = await sorobanService.storeDocument(certificateName, metadataHash, signerSecret);
+      const actor = await actorAddress(signerSecret, adapter);
+      receipt = await adapter.storeDocument(actor, certificateName, metadataHash, { signerSecret });
     } catch (err) {
-      logger.error('sorobanService.storeDocument threw an error', { error: err && err.message, stack: err && err.stack });
+      logger.error('adapter.storeDocument threw an error', { error: err && err.message });
       throw new AppError(502, 'Blockchain store_document call failed', err && err.message);
     }
 
-    if (!receipt || receipt.status !== 'SUCCESS') {
+    if (!receiptOk(receipt)) {
       logger.error('On-chain store_document failed', { receipt });
       throw new AppError(500, 'Blockchain store_document failed');
     }
@@ -158,7 +179,7 @@ async function createCertificate({
 async function checkCertificateIssued(hash, signerSecret = null) {
   logger.info('Checking certificate issued status', { hashShort: (hash || '').slice(0, 16) });
   try {
-    const value = await sorobanService.verifyDocument(hash, signerSecret);
+    const value = await getAdapter().verifyDocument(hash);
     const issued = !!value;
 
     logger.info('Certificate verification result', { hashShort: (hash || '').slice(0, 16), issued });
@@ -498,9 +519,9 @@ async function initContract(signerSecret = null, performedByUserId = null) {
   logger.info('Initializing certificate contract', { signerShort: signerSecret ? 'provided' : 'default-service' });
 
   try {
-    const receipt = await sorobanService.initContract(signerSecret);
+    const receipt = await getAdapter().init({ signerSecret });
 
-    if (!receipt || receipt.status !== 'SUCCESS') {
+    if (!receiptOk(receipt)) {
       logger.error('initContract - blockchain call failed', { receipt });
       throw new AppError(500, 'Blockchain initContract failed');
     }
@@ -510,7 +531,7 @@ async function initContract(signerSecret = null, performedByUserId = null) {
       network: 'testnet',
       purpose: 'init',
       txHash: receipt.hash,
-      status: receipt.status.toLowerCase(),
+      status: txStatusFromReceipt(receipt),
       responseDump: receipt,
       submittedByUserId: performedByUserId
     });
@@ -531,7 +552,7 @@ async function initContract(signerSecret = null, performedByUserId = null) {
 async function readDocument(hash) {
   logger.info('readDocument', { hashShort: (hash || '').slice(0, 16) });
   try {
-    const result = await sorobanService.readDocument(hash);
+    const result = await getAdapter().readDocument(hash);
     logger.info('readDocument result', { hashShort: (hash || '').slice(0, 16), exists: result !== null });
     return result;
   } catch (err) {
@@ -546,7 +567,7 @@ async function readDocument(hash) {
 async function isAddressWhitelisted(address) {
   logger.info('isAddressWhitelisted', { addrShort: address?.slice?.(0, 8) ?? null });
   try {
-    const val = await sorobanService.isWhitelisted(address);
+    const val = await getAdapter().isWhitelisted(address);
     return !!val;
   } catch (err) {
     logger.error('isAddressWhitelisted failed', { error: err.message });
@@ -563,14 +584,14 @@ async function isAddressWhitelisted(address) {
 async function whitelistAddress(address, signerSecret = null, performedByUserId = null) {
   logger.info('whitelistAddress start', { addrShort: address?.slice?.(0,8) ?? null });
   try {
-    const receipt = await sorobanService.whitelistAddress(address, signerSecret);
+    const receipt = await getAdapter().whitelistAddress(address, { signerSecret });
 
     // save web3 tx - ensure Web3Tx enum supports 'whitelist'
     await Web3Tx.create({
       network: 'testnet',
       purpose: 'whitelist',
       txHash: receipt.hash,
-      status: receipt.status.toLowerCase(),
+      status: txStatusFromReceipt(receipt),
       responseDump: receipt,
       submittedByUserId: performedByUserId
     });
@@ -589,13 +610,13 @@ async function whitelistAddress(address, signerSecret = null, performedByUserId 
 async function removeFromWhitelist(address, signerSecret = null, performedByUserId = null) {
   logger.info('removeFromWhitelist start', { addrShort: address?.slice?.(0,8) ?? null });
   try {
-    const receipt = await sorobanService.removeFromWhitelist(address, signerSecret);
+    const receipt = await getAdapter().removeFromWhitelist(address, { signerSecret });
 
     await Web3Tx.create({
       network: 'testnet',
       purpose: 'remove_whitelist',
       txHash: receipt.hash,
-      status: receipt.status.toLowerCase(),
+      status: txStatusFromReceipt(receipt),
       responseDump: receipt,
       submittedByUserId: performedByUserId
     });
@@ -612,15 +633,15 @@ async function removeFromWhitelist(address, signerSecret = null, performedByUser
  * transferOwnership(newOwner, signerSecret, performedByUserId)
  */
 async function transferOwnership(newOwner, signerSecret = null, performedByUserId = null) {
-  logger.info('transferOwnership start', { newOwnerShort: newOwner?.slice?.(0,8) ?? null });
+  logger.info('transferMainAdmin start', { newOwnerShort: newOwner?.slice?.(0,8) ?? null });
   try {
-    const receipt = await sorobanService.transferOwnership(newOwner, signerSecret);
+    const receipt = await getAdapter().transferMainAdmin(newOwner, { signerSecret });
 
     await Web3Tx.create({
       network: 'testnet',
       purpose: 'transfer',
       txHash: receipt.hash,
-      status: receipt.status.toLowerCase(),
+      status: txStatusFromReceipt(receipt),
       responseDump: receipt,
       submittedByUserId: performedByUserId
     });
@@ -637,9 +658,9 @@ async function transferOwnership(newOwner, signerSecret = null, performedByUserI
 
 function createWallet() {
   try {
-    const wallet = sorobanService.createWallet();
-    logger.info('createWallet', { pubShort: wallet.public_key?.slice?.(0,8) ?? null });
-    return wallet;
+    const { publicKey, secret } = generateWallet();
+    logger.info('createWallet', { pubShort: publicKey?.slice?.(0,8) ?? null });
+    return { public_key: publicKey, secret };
   } catch (err) {
     logger.error('createWallet failed', { error: err.message });
     throw err instanceof AppError ? err : new AppError(500, 'createWallet failed', err.message);
@@ -648,13 +669,18 @@ function createWallet() {
 
 async function fundWallet(publicKey) {
   try {
-    const result = await sorobanService.fundWallet(publicKey);
+    const result = await funding.fundWallet(publicKey);
     logger.info('fundWallet success', { pubShort: publicKey?.slice?.(0,8) ?? null });
     return result;
   } catch (err) {
     logger.error('fundWallet failed', { error: err.message });
     throw err instanceof AppError ? err : new AppError(500, 'fundWallet failed', err.message);
   }
+}
+
+/** ownerAddress — main admin address (was a legacy passthrough). */
+async function ownerAddress() {
+  return getAdapter().mainAdminAddress();
 }
 
 /* ---------------- Exports ---------------- */
@@ -668,7 +694,7 @@ async function fundWallet(publicKey) {
  */
 async function getCertificate(id) {
   const cert = await Certificate.findById(id).populate('companyId');
-  if (!cert) throw new AppError('Certificate not found', 404);
+  if (!cert) throw new AppError(404, 'Certificate not found'); // (was arg-swapped → crashed the error handler)
   return cert;
 }
 
@@ -694,7 +720,7 @@ module.exports = {
   whitelistAddress,
   removeFromWhitelist,
   transferOwnership,
-  ownerAddress: sorobanService.ownerAddress, // direct passthrough
+  ownerAddress,
   createWallet,
   fundWallet,
   getCertificate,

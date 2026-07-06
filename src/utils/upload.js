@@ -8,11 +8,13 @@ const UPLOAD_BASE_DIR = process.env.UPLOAD_BASE_DIR || '/data';
 const CERT_UPLOAD_DIR = process.env.CERT_UPLOAD_DIR || 'certificates';
 const DEST_DIR = path.join(UPLOAD_BASE_DIR, CERT_UPLOAD_DIR);
 
-// Toggle: control whether files are written to disk or kept in memory.
-// Default: true (keeps original behavior). Set to 'false' in .env to use memory storage.
-const IS_DISK_UPLOAD = (typeof process.env.USE_DISK_UPLOAD === 'undefined')
-  ? true
-  : (String(process.env.USE_DISK_UPLOAD).toLowerCase() === 'true');
+// Multer buffering mode. The uploaded bytes are now persisted by
+// services/storage.service (GridFS/disk/memory — H4 #11), so multer only needs
+// to hand us the buffer: default to MEMORY unless disk is explicitly selected
+// (STORAGE_DRIVER=disk or the legacy USE_DISK_UPLOAD=true). This removes the
+// noisy /data mkdir on boot in GridFS mode and is multi-instance-correct.
+const IS_DISK_UPLOAD = String(process.env.STORAGE_DRIVER).toLowerCase() === 'disk'
+  || String(process.env.USE_DISK_UPLOAD).toLowerCase() === 'true';
 
 // Ensure the directory exists only when disk upload is enabled. On a read-only
 // filesystem (e.g. Vercel serverless, where only /tmp is writable) mkdir throws

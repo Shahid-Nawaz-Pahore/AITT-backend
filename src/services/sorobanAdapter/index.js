@@ -96,7 +96,13 @@ function buildAdapter() {
     logger.info('sorobanAdapter: using REAL adapter (deployed contract)');
     return realAdapter;
   }
-  logger.info('sorobanAdapter: using STUB adapter (in-memory)');
+  // Loud warning outside tests (audit C3): the stub SIMULATES the blockchain —
+  // writes are recorded as confirmed but nothing is anchored on-chain.
+  if (String(process.env.NODE_ENV).toLowerCase() !== 'test') {
+    logger.warn('sorobanAdapter: using STUB adapter — the blockchain is SIMULATED (no on-chain anchoring). Set SOROBAN_ADAPTER=real for real writes.');
+  } else {
+    logger.info('sorobanAdapter: using STUB adapter (in-memory)');
+  }
   return createStubAdapter();
 }
 

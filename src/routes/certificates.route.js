@@ -26,12 +26,16 @@ router.delete('/admin/:id', requireAuth(['super_admin']), certificatesController
 
 // ==================== EXISTING CERTIFICATE OPERATIONS ====================
 
-// Check if cert is issued (upload file to check)
-router.post('/check', 
+// Check if cert is issued (upload file to check). Authenticated + size-bounded
+// (E-audit H2): was public with an unbounded in-memory multer (OOM DoS).
+router.post('/check',
+    requireAuth(['super_admin', 'regulator_admin', 'sub_admin', 'company_admin']),
     certificatesController.upload.single('file'), certificatesController.checkCertificateIssued);
 
-// Get a certificate (requires auth or optional) - public/semi-public access
-router.get('/:id', authenticateOptional, certificatesController.getCertificate);
+// Get a certificate — AUTHENTICATED + tenant-scoped (E-audit H1). Was
+// authenticateOptional (anonymous), which leaked full reviews/PII/paths. Public
+// authenticity checks use GET /:id/verify (minimal shape) instead.
+router.get('/:id', requireAuth(['super_admin', 'regulator_admin', 'sub_admin', 'company_admin']), certificatesController.getCertificate);
 
 // NOTE (P1 / BE-C1): the broken POST /:id/issue and POST /:id/validate routes
 // were removed with their handlers. The review-gated issue flow is rebuilt in

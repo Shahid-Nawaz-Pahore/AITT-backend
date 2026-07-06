@@ -1,0 +1,946 @@
+openapi: 3.0.3
+info:
+  title: AITT Compliance Backend API
+  version: 1.0.0
+  description: >
+    REST API for the AITT (AI Transparency Token) compliance-certification
+    platform. Documents are submitted by companies, reviewed by sub-admins
+    (0–100 compliance score + one of four review decisions), certified by the
+    Main Admin, and anchored on the deployed Stellar/Soroban contract
+    (CA6KYPPXEUTAP4X6JAEOI37OD2SCKEAUOSV2VN5ICDWCAI4WASFHRSYB). Exceptional
+    actions (revocation, threshold changes, upgrades) go through N-of-M
+    multi-sig governance proposals.
+
+    Auth: obtain a JWT via POST /auth/login, then send it as
+    `Authorization: Bearer <accessToken>` on protected routes.
+
+    Health check (outside /api/v1): `GET /` returns a plain-text running message.
+servers:
+  - url: https://aitt-backend.vercel.app/api/v1
+    description: Vercel (testnet)
+  - url: http://localhost:4000/api/v1
+    description: Local
+
+tags:
+  - name: Auth
+    description: Login, token refresh, user registration (admin-gated)
+  - name: Documents
+    description: Document lifecycle — submit, review, issue, verify
+  - name: Certificates
+    description: Certificate management and public verification
+  - name: Proposals
+    description: Multi-sig governance proposals
+  - name: Governance
+    description: N-of-M governance threshold settings
+  - name: Companies
+    description: Company onboarding and management
+  - name: Regulators
+    description: Regulator admin management
+  - name: Sub-admins
+    description: Reviewer (sub-admin) management
+  - name: Frameworks
+    description: Compliance frameworks (read-only)
+  - name: Templates
+    description: Document templates (+ .docx download)
+  - name: Alerts
+    description: Expiry / compliance alerts
+  - name: Notifications
+    description: Per-user notifications
+  - name: Soroban
+    description: Direct on-chain helpers (whitelist, store, verify, wallets)
+  - name: Admin
+    description: Ops jobs and audit trail
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but role not permitted
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string }
+        details: { type: object, nullable: true }
+    Ok:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data: { type: object }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, example: admin@aitt.io }
+        password: { type: string, example: "YourStrongPass12+" }
+    TokenResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        user: { type: object }
+    RegisterRequest:
+      type: object
+      required: [email, password, role]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+        role:
+          type: string
+          enum: [super_admin, regulator_admin, sub_admin, company_admin]
+        companyId: { type: string, nullable: true }
+        company: { type: object, nullable: true }
+        regulatorId: { type: string, nullable: true }
+        regulator: { type: object, nullable: true }
+    ReviewRequest:
+      type: object
+      required: [decision, complianceScore]
+      properties:
+        decision:
+          type: string
+          enum: [Approved, ApprovedWithRecommendations, RequiresChanges, Rejected]
+        complianceScore: { type: integer, minimum: 0, maximum: 100, example: 85 }
+        comment: { type: string, nullable: true }
+    ProposalRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [RevokeCertificate, UpdateThreshold, ContractUpgrade, framework_update]
+        title: { type: string }
+        description: { type: string, nullable: true }
+        targetRef: { type: string, nullable: true, description: "e.g. document hash for RevokeCertificate" }
+        payload: { type: object, nullable: true }
+    GovernanceRequest:
+      type: object
+      required: [required, total]
+      properties:
+        required: { type: integer, example: 2, description: "N in N-of-M" }
+        total: { type: integer, example: 3, description: "M in N-of-M" }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------- Auth ----------------
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive JWT tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Access + refresh tokens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Too many failed logins (rate-limited) }
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a user (super_admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201': { description: User created }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a refresh token for a new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200': { description: New tokens }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/exchange-key:
+    post:
+      tags: [Auth]
+      summary: Exchange an API key for a token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: API-key exchange payload }
+      responses:
+        '200': { description: Token issued }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ---------------- Documents ----------------
+  /documents:
+    post:
+      tags: [Documents]
+      summary: Submit a document (company_admin, super_admin)
+      description: Multipart upload. Company admins submit for their own company.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                subject: { type: string }
+                filename: { type: string, nullable: true }
+                companyId: { type: string, nullable: true, description: "admins only" }
+      responses:
+        '201': { description: Document submitted (Submitted status) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Documents]
+      summary: List documents (any authenticated role)
+      parameters:
+        - { name: status, in: query, schema: { type: string }, description: filter by composed status }
+        - { name: companyId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Document list }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /documents/{id}:
+    get:
+      tags: [Documents]
+      summary: Get a document by id
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Document }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /documents/{id}/file:
+    get:
+      tags: [Documents]
+      summary: Download the document file (authenticated, role-scoped)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: File stream }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /documents/{id}/verify:
+    get:
+      tags: [Documents]
+      summary: Verify a document by id (public)
+      security: []
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Verification result (on-chain status) }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /documents/verify/{hash}:
+    get:
+      tags: [Documents]
+      summary: Verify a document by hash (public)
+      security: []
+      parameters: [{ name: hash, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Verification result }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /documents/{id}/review:
+    post:
+      tags: [Documents]
+      summary: Submit a review (sub_admin, regulator_admin, super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewRequest' }
+      responses:
+        '200': { description: Review recorded; compliance status recomputed }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /documents/{id}/issue:
+    post:
+      tags: [Documents]
+      summary: Issue a certificate for a document (super_admin)
+      description: Gated — only issuable after an Approved / ApprovedWithRecommendations review.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expiryAt: { type: string, format: date-time, nullable: true }
+      responses:
+        '200': { description: Certificate issued (on-chain Issued) }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Certificates ----------------
+  /certificates:
+    post:
+      tags: [Certificates]
+      summary: Create a certificate (super_admin, regulator_admin)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [certificateName, subject]
+              properties:
+                certificateName: { type: string }
+                subject: { type: string }
+                file: { type: string, format: binary, nullable: true }
+      responses:
+        '201': { description: Certificate created }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /certificates/check:
+    post:
+      tags: [Certificates]
+      summary: Check whether a certificate/document is issued
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hash: { type: string, description: document hash }
+      responses:
+        '200': { description: Issued status }
+  /certificates/{id}:
+    get:
+      tags: [Certificates]
+      summary: Get a certificate (optional auth adds private fields)
+      security: []
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Certificate }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /certificates/{id}/verify:
+    get:
+      tags: [Certificates]
+      summary: Public certificate verification
+      security: []
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Public verification result }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /certificates/admin/all:
+    get:
+      tags: [Certificates]
+      summary: List all certificates (super_admin)
+      responses:
+        '200': { description: Certificate list }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /certificates/admin/{id}:
+    get:
+      tags: [Certificates]
+      summary: Get certificate by id (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Certificate }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Certificates]
+      summary: Update a certificate (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                certificateName: { type: string }
+                subject: { type: string }
+      responses:
+        '200': { description: Updated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Certificates]
+      summary: Delete a certificate (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Proposals ----------------
+  /proposals:
+    post:
+      tags: [Proposals]
+      summary: Create a governance proposal (super_admin, regulator_admin, sub_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProposalRequest' }
+      responses:
+        '201': { description: Proposal created }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Proposals]
+      summary: List proposals
+      responses:
+        '200': { description: Proposal list }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /proposals/{id}:
+    get:
+      tags: [Proposals]
+      summary: Get a proposal
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Proposal }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /proposals/{id}/sign:
+    post:
+      tags: [Proposals]
+      summary: Sign / approve a proposal (auto-executes at threshold)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Signature recorded; executed if threshold met }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /proposals/{id}/reject:
+    post:
+      tags: [Proposals]
+      summary: Reject a proposal (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Rejected }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Governance ----------------
+  /governance:
+    get:
+      tags: [Governance]
+      summary: Get governance settings (threshold, signers)
+      responses:
+        '200': { description: Governance config }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [Governance]
+      summary: Set N-of-M threshold (super_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GovernanceRequest' }
+      responses:
+        '200': { description: Updated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Companies ----------------
+  /companies/register:
+    post:
+      tags: [Companies]
+      summary: Self-register a company (public)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string }
+                contactPhone: { type: string, nullable: true }
+                wallet: { type: string, nullable: true }
+      responses:
+        '201': { description: Company registered (pending approval) }
+  /companies:
+    post:
+      tags: [Companies]
+      summary: Create a company (super_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '201': { description: Created }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Companies]
+      summary: List companies
+      responses:
+        '200': { description: Company list }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /companies/with-users:
+    get:
+      tags: [Companies]
+      summary: List companies with their users
+      responses:
+        '200': { description: Companies + users }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /companies/{id}:
+    get:
+      tags: [Companies]
+      summary: Get a company
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Company }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Companies]
+      summary: Remove a company (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Removed }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /companies/{id}/approve:
+    post:
+      tags: [Companies]
+      summary: Approve a company (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Approved }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Regulators ----------------
+  /regulators:
+    post:
+      tags: [Regulators]
+      summary: Create a regulator (super_admin)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        '201': { description: Created }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Regulators]
+      summary: List regulators (super_admin, regulator_admin)
+      responses:
+        '200': { description: Regulator list }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /regulators/users-grouped:
+    get:
+      tags: [Regulators]
+      summary: List all users grouped (super_admin, regulator_admin)
+      responses:
+        '200': { description: Grouped users }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /regulators/{id}:
+    get:
+      tags: [Regulators]
+      summary: Get a regulator
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Regulator }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /regulators/promote:
+    post:
+      tags: [Regulators]
+      summary: Promote a user to regulator_admin (super_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties: { userId: { type: string } }
+      responses:
+        '200': { description: Promoted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /regulators/demote:
+    post:
+      tags: [Regulators]
+      summary: Demote a regulator_admin (super_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties: { userId: { type: string } }
+      responses:
+        '200': { description: Demoted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Sub-admins ----------------
+  /sub-admins:
+    post:
+      tags: [Sub-admins]
+      summary: Invite a sub-admin / reviewer (super_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string }
+                wallet: { type: string, nullable: true }
+      responses:
+        '201': { description: Sub-admin invited }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Sub-admins]
+      summary: List sub-admins (super_admin, regulator_admin, sub_admin)
+      responses:
+        '200': { description: Sub-admin list }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /sub-admins/{id}/activate:
+    post:
+      tags: [Sub-admins]
+      summary: Activate a sub-admin (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Activated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /sub-admins/{id}:
+    delete:
+      tags: [Sub-admins]
+      summary: Remove a sub-admin (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Removed }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Frameworks ----------------
+  /frameworks:
+    get:
+      tags: [Frameworks]
+      summary: List compliance frameworks
+      responses:
+        '200': { description: Framework list }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /frameworks/{id}:
+    get:
+      tags: [Frameworks]
+      summary: Get a framework
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Framework }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------- Templates ----------------
+  /templates:
+    get:
+      tags: [Templates]
+      summary: List templates
+      responses:
+        '200': { description: Template list }
+    post:
+      tags: [Templates]
+      summary: Create a template (super_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string, nullable: true }
+                file: { type: string, nullable: true }
+      responses:
+        '201': { description: Created }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /templates/{id}:
+    get:
+      tags: [Templates]
+      summary: Get a template
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Template }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Templates]
+      summary: Update a template (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string, nullable: true }
+                file: { type: string, nullable: true }
+      responses:
+        '200': { description: Updated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Templates]
+      summary: Remove a template (super_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Removed }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /templates/{id}/download:
+    get:
+      tags: [Templates]
+      summary: Download a template (.docx)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: File stream }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------- Alerts ----------------
+  /alerts:
+    get:
+      tags: [Alerts]
+      summary: List alerts (super_admin, regulator_admin, sub_admin)
+      responses:
+        '200': { description: Alert list }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Alerts]
+      summary: Create an alert (super_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                docId: { type: string, nullable: true }
+                message: { type: string }
+                dueDate: { type: string, format: date-time, nullable: true }
+                severity: { type: string, enum: [warning, critical], nullable: true }
+                kind: { type: string, nullable: true }
+      responses:
+        '201': { description: Created }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /alerts/{id}/resolve:
+    post:
+      tags: [Alerts]
+      summary: Resolve an alert (super_admin, regulator_admin, sub_admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Resolved }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Notifications ----------------
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List my notifications
+      responses:
+        '200': { description: Notification list }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications read
+      responses:
+        '200': { description: All marked read }
+  /notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark one notification read
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Marked read }
+
+  # ---------------- Soroban (direct chain) ----------------
+  /soroban/store_document:
+    post:
+      tags: [Soroban]
+      summary: Store a document hash on-chain (super_admin, regulator_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, hash]
+              properties:
+                name: { type: string }
+                hash: { type: string }
+                useOwner: { type: boolean, nullable: true }
+      responses:
+        '200': { description: On-chain receipt }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /soroban/verify/{hash}:
+    get:
+      tags: [Soroban]
+      summary: Verify a document hash on-chain (public)
+      security: []
+      parameters: [{ name: hash, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Verification result }
+  /soroban/read/{hash}:
+    get:
+      tags: [Soroban]
+      summary: Read a document from chain (public)
+      security: []
+      parameters: [{ name: hash, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Document }
+  /soroban/is_whitelisted/{address}:
+    get:
+      tags: [Soroban]
+      summary: Check if an address is whitelisted (public)
+      security: []
+      parameters: [{ name: address, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Boolean result }
+  /soroban/whitelist:
+    post:
+      tags: [Soroban]
+      summary: Whitelist an address (super_admin, regulator_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string }
+                useOwner: { type: boolean, nullable: true }
+      responses:
+        '200': { description: On-chain receipt }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /soroban/remove_whitelist:
+    post:
+      tags: [Soroban]
+      summary: Remove an address from the whitelist (super_admin, regulator_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string }
+                useOwner: { type: boolean, nullable: true }
+      responses:
+        '200': { description: On-chain receipt }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /soroban/owner:
+    get:
+      tags: [Soroban]
+      summary: Get the contract main-admin address (public)
+      security: []
+      responses:
+        '200': { description: Owner address }
+  /soroban/transfer_ownership:
+    post:
+      tags: [Soroban]
+      summary: Transfer main-admin (super_admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newOwner]
+              properties:
+                newOwner: { type: string }
+                useOwner: { type: boolean, nullable: true }
+      responses:
+        '200': { description: On-chain receipt }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /soroban/helpers/create_wallet:
+    post:
+      tags: [Soroban]
+      summary: Create a new Stellar keypair (helper)
+      security: []
+      responses:
+        '200': { description: publicKey + secret (testnet helper) }
+  /soroban/helpers/fund_wallet:
+    post:
+      tags: [Soroban]
+      summary: Fund a testnet wallet via friendbot (helper)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [publicKey]
+              properties: { publicKey: { type: string } }
+      responses:
+        '200': { description: Funded }
+  /soroban/init:
+    post:
+      tags: [Soroban]
+      summary: Initialize the contract (super_admin)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { useOwner: { type: boolean, nullable: true } }
+      responses:
+        '200': { description: Initialized }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------- Admin ----------------
+  /admin/jobs/expiry:
+    post:
+      tags: [Admin]
+      summary: Run the expiry job (super_admin)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                warnWithinDays: { type: integer, default: 30 }
+      responses:
+        '200': { description: "{ expired, warned, alertsCreated }" }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/audit:
+    get:
+      tags: [Admin]
+      summary: List audit-trail entries (super_admin)
+      parameters:
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Audit log }
+        '403': { $ref: '#/components/responses/Forbidden' }

@@ -42,7 +42,9 @@ jest.doMock('../src/models/User', () => ({
 }));
 jest.doMock('../src/models/RefreshToken', () => ({
   create: jest.fn(),
-  find: jest.fn()
+  find: jest.fn(),
+  findOne: jest.fn(),
+  updateMany: jest.fn()
 }));
 jest.doMock('../src/models/ApiKey', () => ({
   findOne: jest.fn()
@@ -192,13 +194,14 @@ describe('auth.service (unit)', () => {
   });
 
   describe('issueRefreshToken', () => {
-    it('creates a RefreshToken and returns raw token', async () => {
-      // RefreshToken.create is mocked below; ensure it resolves
+    it('creates a RefreshToken (with selector) and returns a `selector.verifier` raw token', async () => {
       RefreshToken.create.mockResolvedValueOnce({ _id: 'rt1' });
       const user = { _id: 'u7' };
       const raw = await auth.issueRefreshToken(user, { ua: 'ua', ip: '1.2.3.4' });
-      expect(RefreshToken.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u7', tokenHash: expect.any(String) }));
-      expect(raw).toBe('RANDOM_RAW_TOKEN');
+      expect(RefreshToken.create).toHaveBeenCalledWith(expect.objectContaining({
+        userId: 'u7', selector: expect.any(String), tokenHash: expect.any(String),
+      }));
+      expect(raw).toContain('.'); // selector.verifier
     });
 
     it('wraps errors into AppError', async () => {
@@ -242,47 +245,58 @@ describe('auth.service (unit)', () => {
 
       const res = await auth.login({ email: 'x', password: 'goodpassword', ip: '1.1.1.1', ua: 'ua' });
       expect(res).toHaveProperty('access', 'MOCKED_ACCESS_TOKEN');
-      // issueRefreshToken returns the raw from generateRandomToken which our mock returns
-      expect(res).toHaveProperty('refresh', 'RANDOM_RAW_TOKEN');
+      // issueRefreshToken now returns `selector.verifier`.
+      expect(res.refresh).toContain('.');
       expect(user.save).toHaveBeenCalled();
     });
   });
 
   describe('refresh', () => {
-    it('throws 401 when refresh token expired', async () => {
-      // Setup token that matches bcrypt.compare and is expired.
-      const oldDate = new Date(Date.now() - 1000);
-      const tokenDoc = { _id: 't1', tokenHash: 'HASH', userId: 'u12', expiresAt: oldDate, save: jest.fn() };
-      RefreshToken.find.mockReturnValueOnce(findChain([tokenDoc]));
-      bcrypt.compare.mockResolvedValueOnce(true);
-
-      // The service re-throws AppError verbatim, so an expired token surfaces as 401.
-      await expect(auth.refresh({ refreshTokenRaw: 'raw' })).rejects.toMatchObject({ statusCode: 401 });
+    it('rejects a malformed token (no selector.verifier) with 401', async () => {
+      await expect(auth.refresh({ refreshTokenRaw: 'nodot' })).rejects.toMatchObject({ statusCode: 401 });
     });
 
-    it('successful refresh exchanges token', async () => {
-      const future = new Date(Date.now() + 1000 * 60 * 60);
-      const tokenDoc = { _id: 't2', tokenHash: 'HASH2', userId: 'u13', expiresAt: future, save: jest.fn() };
-      RefreshToken.find.mockReturnValueOnce(findChain([tokenDoc]));
+    it('throws 401 when refresh token expired', async () => {
+      const oldDate = new Date(Date.now() - 1000);
+      const tokenDoc = { _id: 't1', tokenHash: 'HASH', userId: 'u12', expiresAt: oldDate, revokedAt: null, save: jest.fn() };
+      RefreshToken.findOne.mockResolvedValueOnce(tokenDoc);
       bcrypt.compare.mockResolvedValueOnce(true);
 
-      // mock User.findById to return user
-      User.findById.mockResolvedValueOnce({ _id: 'u13' });
+      await expect(auth.refresh({ refreshTokenRaw: 'sel.ver' })).rejects.toMatchObject({ statusCode: 401 });
+      expect(RefreshToken.findOne).toHaveBeenCalledWith({ selector: 'sel' });
+    });
 
-      // Let the internal issueRefreshToken run but ensure its DB call succeeds
+    it('successful refresh exchanges token (O(1) lookup by selector)', async () => {
+      const future = new Date(Date.now() + 1000 * 60 * 60);
+      const tokenDoc = { _id: 't2', tokenHash: 'HASH2', userId: 'u13', expiresAt: future, revokedAt: null, save: jest.fn() };
+      RefreshToken.findOne.mockResolvedValueOnce(tokenDoc);
+      bcrypt.compare.mockResolvedValueOnce(true);
+      User.findById.mockResolvedValueOnce({ _id: 'u13' });
       RefreshToken.create.mockResolvedValueOnce({ _id: 'newRT' });
 
-      const res = await auth.refresh({ refreshTokenRaw: 'raw' });
-      // access created via jwt.sign mock
+      const res = await auth.refresh({ refreshTokenRaw: 'sel.ver' });
       expect(res).toHaveProperty('access', 'MOCKED_ACCESS_TOKEN');
-      expect(res).toHaveProperty('refresh', 'RANDOM_RAW_TOKEN');
-      expect(tokenDoc.revokedAt).toBeDefined();
+      expect(res.refresh).toContain('.');
+      expect(tokenDoc.revokedAt).toBeInstanceOf(Date);
       expect(tokenDoc.save).toHaveBeenCalled();
     });
 
-    it('throws 401 when no matching token found', async () => {
-      RefreshToken.find.mockReturnValueOnce(findChain([]));
-      await expect(auth.refresh({ refreshTokenRaw: 'x' })).rejects.toMatchObject({ statusCode: 401 });
+    it('throws 401 when no matching selector is found', async () => {
+      RefreshToken.findOne.mockResolvedValueOnce(null);
+      await expect(auth.refresh({ refreshTokenRaw: 'sel.ver' })).rejects.toMatchObject({ statusCode: 401 });
+    });
+
+    it('detects reuse of an already-revoked token and revokes all sessions', async () => {
+      const revokedDoc = { _id: 'rvk1', tokenHash: 'HASHR', userId: 'u99', revokedAt: new Date(), save: jest.fn() };
+      RefreshToken.findOne.mockResolvedValueOnce(revokedDoc);
+      bcrypt.compare.mockResolvedValueOnce(true); // verifier matches, but token is revoked
+      RefreshToken.updateMany.mockResolvedValueOnce({ modifiedCount: 2 });
+
+      await expect(auth.refresh({ refreshTokenRaw: 'sel.ver' })).rejects.toMatchObject({ statusCode: 401 });
+      expect(RefreshToken.updateMany).toHaveBeenCalledWith(
+        { userId: 'u99', revokedAt: null },
+        { $set: { revokedAt: expect.any(Date) } }
+      );
     });
   });
 

@@ -10,7 +10,9 @@
 // ---------------------------------------------------------------------------
 const Certificate = require('../models/Certificate');
 const GovernanceConfig = require('../models/GovernanceConfig');
+const Proposal = require('../models/Proposal');
 const logger = require('../utils/logger');
+const indexer = require('./indexer.service');
 const { composeStatus, latestReview } = require('../utils/composeStatus');
 const { getAdapter } = require('./sorobanAdapter');
 
@@ -115,8 +117,59 @@ async function reconcileGovernance({ adapter = getAdapter(), fix = false } = {})
   return result;
 }
 
+/**
+ * reconcileProposals({ adapter, fix, limit }) — heal on-chain proposals whose DB
+ * row drifted from the chain (E-audit M4): e.g. an approve committed on-chain but
+ * the sign-time readback failed, leaving the DB `pending`. Reads each pending
+ * on-chain proposal back and (with fix) updates signers/executed + mirrors the
+ * executed side-effect (revocation). Chain is the source of truth.
+ */
+async function reconcileProposals({ adapter = getAdapter(), fix = false, limit = 200 } = {}) {
+  const pending = await Proposal.find({ onChain: true, status: 'pending', onChainId: { $ne: null } }).limit(limit);
+  let drifted = 0;
+  let fixed = 0;
+  const details = [];
+
+  for (const p of pending) {
+    let chainProp;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      chainProp = await adapter.readProposal(p.onChainId);
+    } catch (e) {
+      continue; // RPC hiccup — try again next cycle
+    }
+    if (!chainProp) continue;
+
+    const chainSigners = Array.isArray(chainProp.approvals) ? chainProp.approvals : [];
+    const chainExecuted = !!chainProp.executed;
+    const isDrift = chainExecuted !== p.executed || chainSigners.length !== (p.signers || []).length;
+    if (!isDrift) continue;
+    drifted += 1;
+
+    if (fix) {
+      const becameExecuted = chainExecuted && !p.executed;
+      p.signers = chainSigners;
+      p.executed = chainExecuted;
+      p.status = chainExecuted ? 'executed' : 'pending';
+      if (chainExecuted && !p.executedAt) p.executedAt = new Date();
+      // eslint-disable-next-line no-await-in-loop
+      await p.save();
+
+      if (becameExecuted && p.type === 'revocation' && p.payload && p.payload.docHash) {
+        // eslint-disable-next-line no-await-in-loop
+        await indexer.mirrorRevocation({ metadataHash: p.payload.docHash, receipt: null }).catch((e) => logger.warn('reconcile revoke mirror failed', { error: e.message }));
+      }
+      fixed += 1;
+      details.push({ id: String(p._id), executed: chainExecuted, signers: chainSigners.length });
+    }
+  }
+
+  return { checked: pending.length, drifted, fixed, details };
+}
+
 module.exports = {
   reconcileCertificate,
   reconcileAllCertificates,
   reconcileGovernance,
+  reconcileProposals,
 };

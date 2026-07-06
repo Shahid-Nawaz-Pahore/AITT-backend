@@ -13,13 +13,13 @@
     "lint": "echo \"Run your linter\""
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=20"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "14.1.1",
     "bcryptjs": "^2.4.3",
+    "chalk": "^4.1.2",
     "cors": "^2.8.5",
-    "crypto": "^1.0.1",
     "express": "^4.18.2",
     "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^6.7.0",

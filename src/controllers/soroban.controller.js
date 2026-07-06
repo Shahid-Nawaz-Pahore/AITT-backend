@@ -1,53 +1,30 @@
 // src/controllers/soroban.controller.js
-const sorobanService = require('../services/soroban.service');
+// ---------------------------------------------------------------------------
+// Raw chain ops/debug surface (/api/v1/soroban/*). ALL access goes through the
+// sorobanAdapter (H3 #9 — the legacy soroban.service.js was retired). Writes are
+// admin-gated (see soroban.routes) and signed with the service/main-admin key.
+// Method names map to the DEPLOYED contract ABI (main_admin_address /
+// transfer_main_admin), not the old v1 owner_* names.
+// ---------------------------------------------------------------------------
+const { getAdapter } = require('../services/sorobanAdapter');
+const { generateWallet } = require('../utils/wallet');
+const funding = require('../services/funding.service');
 const logger = require('../utils/logger');
 const AppError = require('../utils/AppError');
 
 /**
- * NOTE: Temporary change — this helper now always returns `null`,
- * which causes soroban.service to use the backend owner/service key.
- * We keep the function so request payloads with `useOwner` don't break,
- * but the flag is ignored for now.
- */
-/**
- * Decide which secret key to use for signing
- * - useOwner=true → owner key (SERVICE_SECRET)
- * - useOwner=false → whitelisted key (WHITELIST_SECRET)
- */
-function resolveSignerSecret(useOwner) {
-  if (useOwner === true || useOwner === 'true') {
-    return process.env.SERVICE_SECRET || null;
-  }
-  if (useOwner === false || useOwner === 'false') {
-    return process.env.WHITELISTED_SIGNER_SECRET || null;
-  }
-  return null; // fallback (service defaults internally)
-}
-
-
-/**
- * POST /soroban/store_document
- * body: { name, hash, useOwner=true }
+ * POST /soroban/store_document  body: { name, hash }
+ * Admin ops passthrough — anchors a raw document signed by the service key.
  */
 async function storeDocument(req, res, next) {
   try {
-    const { name, hash, useOwner } = req.body;
+    const { name, hash } = req.body;
     if (!name || !hash) {
       return res.status(400).json({ success: false, message: 'name and hash are required' });
     }
-
-    logger.info('soroban.storeDocument called', {
-      namePrefix: (name || '').slice(0, 16),
-      hashShort: (hash || '').slice(0, 16),
-      note: 'useOwner flag ignored; signing with owner key'
-    });
-
-    // Always null for now (owner signing)
-    const signerSecret = resolveSignerSecret(useOwner);
-
-    const receipt = await sorobanService.storeDocument(name, hash, signerSecret);
-    logger.info('soroban.storeDocument result', { namePrefix: (name || '').slice(0,16), txHash: receipt.hash });
-
+    const adapter = getAdapter();
+    const actor = await adapter.mainAdminAddress();
+    const receipt = await adapter.storeDocument(actor, name, hash, {});
     return res.json({ success: true, data: { tx: receipt } });
   } catch (err) {
     logger.error('soroban.storeDocument failed', { message: err.message });
@@ -55,22 +32,12 @@ async function storeDocument(req, res, next) {
   }
 }
 
-/**
- * GET /soroban/verify/:hash?useOwner=true
- */
+/** GET /soroban/verify/:hash — public state-aware verification. */
 async function verifyDocument(req, res, next) {
   try {
-    const hash = req.params.hash;
-    const useOwner = req.query.useOwner;
+    const { hash } = req.params;
     if (!hash) return res.status(400).json({ success: false, message: 'hash required' });
-
-    logger.info('soroban.verifyDocument called', {
-      hashShort: hash.slice(0, 16),
-      note: 'useOwner flag ignored; using owner key for optional signer'
-    });
-
-    const signerSecret = resolveSignerSecret(useOwner);
-    const value = await sorobanService.verifyDocument(hash, signerSecret);
+    const value = await getAdapter().verifyDocument(hash);
     return res.json({ success: true, data: { document: value } });
   } catch (err) {
     logger.error('soroban.verifyDocument failed', { message: err.message });
@@ -78,22 +45,12 @@ async function verifyDocument(req, res, next) {
   }
 }
 
-/**
- * GET /soroban/read/:hash?useOwner=true
- */
+/** GET /soroban/read/:hash — public raw document read. */
 async function readDocument(req, res, next) {
   try {
-    const hash = req.params.hash;
-    const useOwner = req.query.useOwner;
+    const { hash } = req.params;
     if (!hash) return res.status(400).json({ success: false, message: 'hash required' });
-
-    logger.info('soroban.readDocument called', {
-      hashShort: hash.slice(0, 16),
-      note: 'useOwner flag ignored; using owner key for optional signer'
-    });
-
-    const signerSecret = resolveSignerSecret(useOwner);
-    const doc = await sorobanService.readDocument(hash, signerSecret);
+    const doc = await getAdapter().readDocument(hash);
     return res.json({ success: true, data: { document: doc } });
   } catch (err) {
     logger.error('soroban.readDocument failed', { message: err.message });
@@ -101,22 +58,12 @@ async function readDocument(req, res, next) {
   }
 }
 
-/**
- * GET /soroban/is_whitelisted/:address?useOwner=true
- */
+/** GET /soroban/is_whitelisted/:address — public. */
 async function isWhitelisted(req, res, next) {
   try {
-    const address = req.params.address;
-    const useOwner = req.query.useOwner;
+    const { address } = req.params;
     if (!address) return res.status(400).json({ success: false, message: 'address required' });
-
-    logger.info('soroban.isWhitelisted called', {
-      addrShort: address.slice(0, 8),
-      note: 'useOwner flag ignored; using owner key for optional signer'
-    });
-
-    const signerSecret = resolveSignerSecret(useOwner);
-    const whitelisted = await sorobanService.isWhitelisted(address, signerSecret);
+    const whitelisted = await getAdapter().isWhitelisted(address);
     return res.json({ success: true, data: { address, whitelisted: !!whitelisted } });
   } catch (err) {
     logger.error('soroban.isWhitelisted failed', { message: err.message });
@@ -124,20 +71,12 @@ async function isWhitelisted(req, res, next) {
   }
 }
 
-/**
- * POST /soroban/whitelist
- * body: { address, useOwner=true }
- */
+/** POST /soroban/whitelist  body: { address } — admin. */
 async function whitelistAddress(req, res, next) {
   try {
-    const { address, useOwner } = req.body;
+    const { address } = req.body;
     if (!address) return res.status(400).json({ success: false, message: 'address required' });
-
-    logger.info('soroban.whitelistAddress called', { addrShort: address.slice(0, 8) });
-
-    // still using owner key (protected endpoint anyway)
-    const signerSecret = resolveSignerSecret(useOwner);
-    const receipt = await sorobanService.whitelistAddress(address, signerSecret || null);
+    const receipt = await getAdapter().whitelistAddress(address, {});
     return res.json({ success: true, data: { tx: receipt } });
   } catch (err) {
     logger.error('soroban.whitelistAddress failed', { message: err.message });
@@ -145,19 +84,12 @@ async function whitelistAddress(req, res, next) {
   }
 }
 
-/**
- * POST /soroban/remove_whitelist
- * body: { address, useOwner=true }
- */
+/** POST /soroban/remove_whitelist  body: { address } — admin. */
 async function removeFromWhitelist(req, res, next) {
   try {
-    const { address, useOwner } = req.body;
+    const { address } = req.body;
     if (!address) return res.status(400).json({ success: false, message: 'address required' });
-
-    logger.info('soroban.removeFromWhitelist called', { addrShort: address.slice(0, 8) });
-
-    const signerSecret = resolveSignerSecret(useOwner);
-    const receipt = await sorobanService.removeFromWhitelist(address, signerSecret || null);
+    const receipt = await getAdapter().removeFromWhitelist(address, {});
     return res.json({ success: true, data: { tx: receipt } });
   } catch (err) {
     logger.error('soroban.removeFromWhitelist failed', { message: err.message });
@@ -165,13 +97,10 @@ async function removeFromWhitelist(req, res, next) {
   }
 }
 
-/**
- * GET /soroban/owner
- */
+/** GET /soroban/owner — public. Main admin address (was owner_address). */
 async function ownerAddress(req, res, next) {
   try {
-    logger.info('soroban.ownerAddress called');
-    const owner = await sorobanService.ownerAddress();
+    const owner = await getAdapter().mainAdminAddress();
     return res.json({ success: true, data: { owner } });
   } catch (err) {
     logger.error('soroban.ownerAddress failed', { message: err.message });
@@ -180,18 +109,15 @@ async function ownerAddress(req, res, next) {
 }
 
 /**
- * POST /soroban/transfer_ownership
- * body: { newOwner, useOwner=true }
+ * POST /soroban/transfer_ownership  body: { newOwner } — super_admin.
+ * Maps to transfer_main_admin on the deployed contract. IRREVERSIBLE on the
+ * shared contract; guarded to super_admin.
  */
 async function transferOwnership(req, res, next) {
   try {
-    const { newOwner, useOwner } = req.body;
+    const { newOwner } = req.body;
     if (!newOwner) return res.status(400).json({ success: false, message: 'newOwner required' });
-
-    logger.info('soroban.transferOwnership called', { newOwnerShort: newOwner.slice(0, 8) });
-
-    const signerSecret = resolveSignerSecret(useOwner);
-    const receipt = await sorobanService.transferOwnership(newOwner, signerSecret || null);
+    const receipt = await getAdapter().transferMainAdmin(newOwner, {});
     return res.json({ success: true, data: { tx: receipt } });
   } catch (err) {
     logger.error('soroban.transferOwnership failed', { message: err.message });
@@ -199,30 +125,23 @@ async function transferOwnership(req, res, next) {
   }
 }
 
-/**
- * POST /soroban/create_wallet
- */
+/** POST /soroban/helpers/create_wallet — generate a fresh keypair (admin). */
 async function createWallet(req, res, next) {
   try {
-    logger.info('soroban.createWallet called');
-    const wallet = sorobanService.createWallet();
-    return res.json({ success: true, data: { wallet } });
+    const { publicKey, secret } = generateWallet();
+    return res.json({ success: true, data: { wallet: { public_key: publicKey, secret } } });
   } catch (err) {
     logger.error('soroban.createWallet failed', { message: err.message });
     return next(err instanceof AppError ? err : new AppError(500, 'createWallet failed', err.message));
   }
 }
 
-/**
- * POST /soroban/fund_wallet
- */
+/** POST /soroban/helpers/fund_wallet  body: { publicKey } — testnet friendbot (admin). */
 async function fundWallet(req, res, next) {
   try {
     const { publicKey } = req.body;
     if (!publicKey) return res.status(400).json({ success: false, message: 'publicKey required' });
-
-    logger.info('soroban.fundWallet called', { publicShort: publicKey.slice(0, 8) });
-    const result = await sorobanService.fundWallet(publicKey);
+    const result = await funding.fundWallet(publicKey);
     return res.json({ success: true, data: { result } });
   } catch (err) {
     logger.error('soroban.fundWallet failed', { message: err.message });
@@ -230,17 +149,10 @@ async function fundWallet(req, res, next) {
   }
 }
 
-/**
- * POST /soroban/init
- * body: { useOwner=true }
- */
+/** POST /soroban/init — super_admin. Initialize the contract main admin. */
 async function initContract(req, res, next) {
   try {
-    const { useOwner } = req.body;
-    logger.info('soroban.initContract called', { signerProvided: !!useOwner === false });
-
-    const signerSecret = resolveSignerSecret(useOwner);
-    const receipt = await sorobanService.initContract(signerSecret || null);
+    const receipt = await getAdapter().init({});
     return res.json({ success: true, data: { tx: receipt } });
   } catch (err) {
     logger.error('soroban.initContract failed', { message: err.message });
@@ -259,5 +171,5 @@ module.exports = {
   transferOwnership,
   createWallet,
   fundWallet,
-  initContract
+  initContract,
 };

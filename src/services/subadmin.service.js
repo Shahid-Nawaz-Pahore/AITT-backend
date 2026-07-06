@@ -17,6 +17,7 @@ const indexer = require('./indexer.service');
 const { generateCustodialWallet } = require('../utils/wallet');
 const { hashPassword } = require('../utils/crypto');
 const { toSubAdmin, paginate } = require('../utils/serializers');
+const { fundIfEnabled } = require('./funding.service');
 
 /** inviteSubAdmin — create the DB profile + custodial wallet + login. */
 async function inviteSubAdmin({ name, email, password = null, wallet = null, invitedByUserId = null }) {
@@ -63,6 +64,10 @@ async function activateSubAdmin(id, { adminUserId = null, adapter = getAdapter()
   if (sa.status === 'active') return toSubAdmin(sa);
   if (!sa.walletAddress) throw new AppError(409, 'Sub-admin has no wallet to register');
 
+  // B5: fund the custodial wallet (testnet) so it can later sign submit_review /
+  // approve_proposal. Best-effort, real-mode only; never blocks activation.
+  await fundIfEnabled(sa.walletAddress);
+
   const mainAdmin = await adapter.mainAdminAddress();
   const { mirrored } = await indexer.writeThrough({
     adapter,
@@ -70,7 +75,7 @@ async function activateSubAdmin(id, { adminUserId = null, adapter = getAdapter()
     args: [mainAdmin, sa.walletAddress, {}],
     purpose: 'add_sub_admin',
     meta: { submittedByUserId: adminUserId },
-    mirror: (receipt) => indexer.mirrorSubAdminActivated({ subAdminId: sa._id, receipt }),
+    mirror: { op: 'mirrorSubAdminActivated', payload: { subAdminId: sa._id } },
   });
 
   logger.info('Sub-admin activated on chain', { subAdminId: sa._id });

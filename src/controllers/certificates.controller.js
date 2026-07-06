@@ -3,8 +3,14 @@ const multer = require('multer');
 const certificateService = require('../services/certificate.service');
 const logger = require('../utils/logger');
 
-// Multer in-memory storage (no saving to disk)
-const upload = multer({ storage: multer.memoryStorage() });
+// Multer in-memory storage for the /check hash-verify route. BOUNDED (E-audit
+// H2): a size limit prevents an unauthenticated multi-GB upload from being
+// buffered into memory (OOM DoS). Mirrors the cap in utils/upload.
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 10485760);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+});
 
 // controllers/certificate.controller.js (replace existing file)
 const path = require('path');
@@ -508,6 +514,16 @@ async function deleteCertificate(req, res, next) {
   }
 }
 
+// Remove internal-only fields before returning a certificate to a client
+// (E-audit H1): the absolute storage path is an internal FS detail with no
+// client value and is an info leak.
+function stripInternal(cert) {
+  const obj = cert && typeof cert.toObject === 'function' ? cert.toObject() : { ...cert };
+  // Keep only the provider + public URL; the FS path and driver key are internal.
+  if (obj.storage) obj.storage = { provider: obj.storage.provider, publicUrl: obj.storage.publicUrl };
+  return obj;
+}
+
 async function getCertificate(req, res, next) {
   try {
     const { id } = req.params;
@@ -518,9 +534,15 @@ async function getCertificate(req, res, next) {
       return res.status(404).json({ success: false, message: 'Certificate not found' });
     }
 
-    logger.info('Certificate fetched', { certificateId: id, userId: req.user.sub });
+    // Tenant scoping (E-audit H1): a company_admin may only read its OWN company's
+    // certificates. Admin/reviewer roles may read any.
+    const companyId = cert.companyId && (cert.companyId._id || cert.companyId);
+    if (req.user.role === 'company_admin' && String(companyId) !== String(req.user.companyId)) {
+      return res.status(403).json({ success: false, message: 'Forbidden: certificate belongs to another company' });
+    }
 
-    res.json({ success: true, data: cert });
+    logger.info('Certificate fetched', { certificateId: id, userId: req.user.sub });
+    res.json({ success: true, data: stripInternal(cert) });
   } catch (err) {
     logger.error('Error fetching certificate', { error: err.message, certificateId: req.params.id });
     next(err);
@@ -544,11 +566,20 @@ async function verifyPublic(req, res, next) {
 
     logger.info('Certificate publicly verified', { certificateId: id });
 
+    // MINIMAL public shape (E-audit H1): a public verify endpoint must NOT leak
+    // reviewer identities/comments, wallet addresses, contact PII, storage paths,
+    // or raw chain anchors. Return only authenticity-relevant fields.
     res.json({
       success: true,
       data: {
-        certificate: cert,
-        chain: cert.chain || null, // future: include on-chain status
+        id: cert._id,
+        subject: cert.subject || null,
+        status: cert.status,
+        valid: cert.status === 'issued',
+        metadataHash: cert.metadataHash,
+        issuedAt: cert.createdAt || null,
+        expiryAt: cert.expiryAt || null,
+        company: cert.companyId ? { name: cert.companyId.name || null } : null,
       },
     });
   } catch (err) {

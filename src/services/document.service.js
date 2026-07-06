@@ -11,7 +11,6 @@
 // Files are RE-HASHED server-side here before anchoring (never trust a client hash).
 // ---------------------------------------------------------------------------
 const crypto = require('crypto');
-const fs = require('fs');
 const Certificate = require('../models/Certificate');
 const Company = require('../models/Company');
 const SubAdmin = require('../models/SubAdmin');
@@ -20,6 +19,7 @@ const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
 const { getAdapter, reviewDecisionToContract } = require('./sorobanAdapter');
 const indexer = require('./indexer.service');
+const storage = require('./storage.service');
 const { isIssuable, latestReview } = require('../utils/composeStatus');
 const { REVIEW_DECISIONS, DOC_STATUSES } = require('../utils/statusMap');
 const { decryptSecret } = require('../utils/wallet');
@@ -67,11 +67,24 @@ async function submitDocument({ buffer, filename, subject, mimeType = null, size
     args: [company.walletAddress, filename, metadataHash, { signerSecret }],
     purpose: 'store',
     meta: { submittedByUserId: requestedByUserId },
-    mirror: (receipt) => indexer.mirrorStoredDocument({
-      metadataHash, certificateName: filename, subject, companyId, requestedByUserId, receipt,
-      network: company?.metadata?.network || 'testnet',
-    }),
+    mirror: {
+      op: 'mirrorStoredDocument',
+      payload: {
+        metadataHash, certificateName: filename, subject, companyId, requestedByUserId,
+        network: company?.metadata?.network || 'testnet',
+      },
+    },
   });
+
+  // Persist the actual file via the storage abstraction (GridFS by default, so
+  // uploads survive a multi-instance deploy — H4 #11). Best-effort: the document
+  // is already anchored on-chain + mirrored; a storage hiccup must not undo that.
+  try {
+    const stored = await storage.saveBuffer(buffer, { filename, mimeType: mimeType || 'application/octet-stream' });
+    mirrored.storage = { provider: stored.provider, key: stored.key, path: stored.path || undefined };
+  } catch (e) {
+    logger.warn('Document file storage failed (document remains anchored)', { id: mirrored._id, error: e.message });
+  }
 
   // Persist file metadata the mirror doesn't carry.
   mirrored.originalFilename = filename;
@@ -168,14 +181,16 @@ async function reviewDocument({ id, reviewerUserId, decision, complianceScore, c
     args: [sa.walletAddress, cert.metadataHash, contractStatus, score, commentHash, { signerSecret }],
     purpose: 'review',
     meta: { certificateId: cert._id, submittedByUserId: reviewerUserId },
-    mirror: (receipt) => indexer.mirrorReview({
-      metadataHash: cert.metadataHash,
-      review: {
-        reviewer: sa.name, reviewerId: sa._id, reviewerWallet: sa.walletAddress,
-        decision, complianceScore: score, comment, commentHash,
+    mirror: {
+      op: 'mirrorReview',
+      payload: {
+        metadataHash: cert.metadataHash,
+        review: {
+          reviewer: sa.name, reviewerId: sa._id, reviewerWallet: sa.walletAddress,
+          decision, complianceScore: score, comment, commentHash,
+        },
       },
-      receipt,
-    }),
+    },
   });
 
   // Count a NEW review (not a re-review) toward the officer's tally.
@@ -230,7 +245,7 @@ async function issueDocument({ id, issuerUserId, expiryAt = null, adapter = getA
     args: [mainAdmin, cert.metadataHash, expiryUnix, {}],
     purpose: 'issue',
     meta: { certificateId: cert._id, submittedByUserId: issuerUserId },
-    mirror: (receipt) => indexer.mirrorIssuedCertificate({ metadataHash: cert.metadataHash, expiryUnix, receipt }),
+    mirror: { op: 'mirrorIssuedCertificate', payload: { metadataHash: cert.metadataHash, expiryUnix } },
   });
 
   if (cert.requestedByUserId) {
@@ -271,8 +286,8 @@ async function verifyDocument({ hashOrId, adapter = getAdapter() }) {
 }
 
 /**
- * getDocumentFile — resolve the stored upload for download (role-scoped). Only
- * available in disk-storage mode (memory-mode uploads keep no file).
+ * getDocumentFile — resolve the stored upload for download (role-scoped) as a
+ * readable stream via the storage abstraction (disk / GridFS / memory).
  */
 async function getDocumentFile({ id, user }) {
   const cert = await Certificate.findById(id);
@@ -280,10 +295,14 @@ async function getDocumentFile({ id, user }) {
   if (isCompany(user.role) && String(cert.companyId) !== String(user.companyId)) {
     throw new AppError(403, 'Forbidden: document belongs to another company');
   }
-  if (!cert.storage?.path || !fs.existsSync(cert.storage.path)) {
-    throw new AppError(404, 'No stored file available for this document');
-  }
-  return { path: cert.storage.path, filename: cert.originalFilename || `${cert._id}`, mimeType: cert.mimeType || 'application/octet-stream' };
+  const desc = cert.storage && (cert.storage.key || cert.storage.path) ? cert.storage : null;
+  if (!desc) throw new AppError(404, 'No stored file available for this document');
+  const { stream, mimeType, filename } = await storage.getStream(desc);
+  return {
+    stream,
+    filename: filename || cert.originalFilename || String(cert._id),
+    mimeType: mimeType || cert.mimeType || 'application/octet-stream',
+  };
 }
 
 module.exports = {

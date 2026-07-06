@@ -9,6 +9,7 @@ const indexer = require('./indexer.service');
 const { generateCustodialWallet } = require('../utils/wallet');
 const { hashPassword } = require('../utils/crypto');
 const { toCompany, paginate } = require('../utils/serializers');
+const { fundIfEnabled } = require('./funding.service');
 
 /**
  * Create a company. If session provided, this will be created inside that session.
@@ -167,13 +168,17 @@ async function approveCompany(id, { approverUserId = null, adapter = getAdapter(
   if (company.status === 'active') return toCompany(company);
   if (!company.walletAddress) throw new AppError(409, 'Company has no wallet to whitelist');
 
+  // B5: fund the custodial wallet (testnet) so it can later sign store_document.
+  // Best-effort, real-mode only; never blocks approval.
+  await fundIfEnabled(company.walletAddress);
+
   const { mirrored } = await indexer.writeThrough({
     adapter,
     method: 'whitelistAddress',
     args: [company.walletAddress, {}],
     purpose: 'whitelist',
     meta: { submittedByUserId: approverUserId },
-    mirror: (receipt) => indexer.mirrorCompanyApproved({ companyId: company._id, receipt }),
+    mirror: { op: 'mirrorCompanyApproved', payload: { companyId: company._id } },
   });
 
   logger.info('Company approved + whitelisted', { companyId: company._id });

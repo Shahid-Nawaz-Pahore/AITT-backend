@@ -105,10 +105,15 @@ async function verifyDocument(req, res, next) {
 
 async function downloadDocumentFile(req, res, next) {
   try {
-    const { path, filename, mimeType } = await documentService.getDocumentFile({ id: req.params.id, user: req.user });
+    const { stream, filename, mimeType } = await documentService.getDocumentFile({ id: req.params.id, user: req.user });
     res.setHeader('Content-Type', mimeType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    return res.sendFile(path);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+    stream.on('error', (e) => {
+      logger.error('file stream error', { id: req.params.id, error: e.message });
+      if (!res.headersSent) next(e);
+      else res.destroy(e);
+    });
+    return stream.pipe(res);
   } catch (err) {
     return next(err);
   }

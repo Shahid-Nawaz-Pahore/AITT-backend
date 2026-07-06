@@ -1,10 +1,24 @@
-const sorobanService = require('../src/services/soroban.service');
+// Legacy chain access now goes through the sorobanAdapter (soroban.service was
+// retired) — mock getAdapter() to return an in-test fake adapter.
+const mockAdapter = {
+  readDocument: jest.fn(),
+  storeDocument: jest.fn(),
+  verifyDocument: jest.fn(),
+  isWhitelisted: jest.fn(),
+  whitelistAddress: jest.fn(),
+  init: jest.fn(),
+  mainAdminAddress: jest.fn().mockResolvedValue('GADMIN000000000000000000000000000000000000000000000000'),
+};
+jest.mock('../src/services/sorobanAdapter', () => ({ getAdapter: () => mockAdapter }));
+
 const Certificate = require('../src/models/Certificate');
 const CertificateEvent = require('../src/models/CertificateEvent');
 const Web3Tx = require('../src/models/Web3Tx');
 const fs = require('fs');
 const AppError = require('../src/utils/AppError');
 const logger = require('../src/utils/logger');
+
+const sorobanService = mockAdapter; // existing tests reference `sorobanService`
 
 const {
   createCertificate,
@@ -18,7 +32,6 @@ const {
 } = require('../src/services/certificate.service');
 
 // ---- setup mocks ----
-jest.mock('../src/services/soroban.service');
 jest.mock('../src/models/Certificate');
 jest.mock('../src/models/CertificateEvent');
 jest.mock('../src/models/Web3Tx');
@@ -138,7 +151,7 @@ describe('deleteCertificate', () => {
 
 describe('initContract', () => {
   it('stores tx on success', async () => {
-    sorobanService.initContract.mockResolvedValue({ status: 'SUCCESS', hash: '0xinit' });
+    sorobanService.init.mockResolvedValue({ status: 'SUCCESS', hash: '0xinit' });
     Web3Tx.create.mockResolvedValue({});
     const res = await initContract();
     expect(res.hash).toBe('0xinit');

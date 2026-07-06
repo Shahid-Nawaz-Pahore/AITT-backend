@@ -173,17 +173,41 @@ async function signProposal({ id, signerUserId, adapter = getAdapter() }) {
   if (proposal.signers.includes(signer.wallet)) throw new AppError(409, 'You have already signed this proposal');
 
   if (!proposal.onChain) {
-    // OFF-CHAIN framework_update tally.
-    proposal.signers.push(signer.wallet);
-    if (proposal.signers.length >= proposal.threshold) {
-      await applyFrameworkUpdate(proposal.payload);
-      proposal.executed = true;
-      proposal.executedAt = new Date();
-      proposal.status = 'executed';
-      logger.info('Framework-update proposal executed (off-chain)', { id: proposal._id });
+    // OFF-CHAIN framework_update tally — made race-safe (H3 concurrency). Two
+    // officers signing at the same instant previously both load-modify-saved the
+    // signers[] array and could each cross the threshold → double-apply. Now the
+    // add is an atomic $addToSet guarded on status+not-already-signed, and the
+    // execute transition is claimed with a single atomic flip so the framework
+    // change applies exactly once.
+    const added = await Proposal.findOneAndUpdate(
+      { _id: proposal._id, status: 'pending', signers: { $ne: signer.wallet } },
+      { $addToSet: { signers: signer.wallet } },
+      { new: true },
+    );
+    if (!added) throw new AppError(409, 'Proposal is no longer pending or you have already signed it');
+
+    if (!added.executed && added.signers.length >= added.threshold) {
+      const claimed = await Proposal.findOneAndUpdate(
+        { _id: proposal._id, executed: false },
+        { $set: { executed: true, executedAt: new Date(), status: 'executed' } },
+        { new: true },
+      );
+      if (claimed) {
+        try {
+          await applyFrameworkUpdate(claimed.payload);
+        } catch (err) {
+          // The apply failed AFTER we claimed the execute flip. There is no
+          // off-chain reconciler for framework_update, so REVERT the flip back to
+          // pending so a subsequent sign can retry (avoids executed-but-not-applied).
+          await Proposal.updateOne({ _id: proposal._id }, { $set: { executed: false, status: 'pending' }, $unset: { executedAt: '' } });
+          logger.error('Framework-update apply failed after execute flip — reverted to pending', { id: String(proposal._id), error: err.message });
+          throw err;
+        }
+        logger.info('Framework-update proposal executed (off-chain)', { id: claimed._id });
+        return toProposal(claimed);
+      }
     }
-    await proposal.save();
-    return toProposal(proposal);
+    return toProposal(added);
   }
 
   // ON-CHAIN approve.
@@ -191,24 +215,38 @@ async function signProposal({ id, signerUserId, adapter = getAdapter() }) {
   await indexer.recordTx({ purpose: 'approve_proposal', receipt, method: 'approveProposal', proposalId: proposal._id, submittedByUserId: signerUserId });
 
   // gap #5: read the on-chain approvals (signer list) + executed flag back.
-  const chainProp = await adapter.readProposal(proposal.onChainId);
-  proposal.signers = (chainProp && chainProp.approvals) || [...proposal.signers, signer.wallet];
-  proposal.executed = !!(chainProp && chainProp.executed);
-  proposal.status = proposal.executed ? 'executed' : 'pending';
-  if (proposal.executed) { proposal.executedAt = new Date(); proposal.txHashExecute = receipt.hash; }
+  // RESILIENCE (E-audit M4): the approve ALREADY committed on-chain; if this
+  // readback fails (transient RPC), do NOT throw and leave the DB stuck-pending —
+  // record the signer optimistically and let reconcileProposals() catch up.
+  let chainProp = null;
+  try {
+    chainProp = await adapter.readProposal(proposal.onChainId);
+  } catch (err) {
+    logger.warn('approve committed but readback failed — recording optimistically; reconcile will heal', { id: String(proposal._id), error: err.message });
+  }
 
-  // Mirror the executed effect onto our DB.
-  if (proposal.executed) {
-    if (proposal.type === 'revocation') {
-      await indexer.mirrorRevocation({ metadataHash: proposal.payload.docHash, receipt }).catch((e) => logger.warn('revoke mirror failed', { error: e.message }));
-    } else if (proposal.type === 'governance_rule') {
-      const cfg = await GovernanceConfig.getSingleton();
-      cfg.required = await adapter.governanceThreshold();
-      if (cfg.required > cfg.total) cfg.total = cfg.required;
-      cfg.lastSyncedThreshold = cfg.required;
-      await cfg.save();
+  if (chainProp) {
+    proposal.signers = chainProp.approvals || [...new Set([...proposal.signers, signer.wallet])];
+    proposal.executed = !!chainProp.executed;
+    proposal.status = proposal.executed ? 'executed' : 'pending';
+    if (proposal.executed) { proposal.executedAt = new Date(); proposal.txHashExecute = receipt.hash; }
+
+    // Mirror the executed effect onto our DB.
+    if (proposal.executed) {
+      if (proposal.type === 'revocation') {
+        await indexer.mirrorRevocation({ metadataHash: proposal.payload.docHash, receipt }).catch((e) => logger.warn('revoke mirror failed', { error: e.message }));
+      } else if (proposal.type === 'governance_rule') {
+        const cfg = await GovernanceConfig.getSingleton();
+        cfg.required = await adapter.governanceThreshold();
+        if (cfg.required > cfg.total) cfg.total = cfg.required;
+        cfg.lastSyncedThreshold = cfg.required;
+        await cfg.save();
+      }
+      // contract_upgrade: no DB side-effect.
     }
-    // contract_upgrade: no DB side-effect.
+  } else {
+    // Readback unavailable — at least record this signer; status stays pending.
+    if (!proposal.signers.includes(signer.wallet)) proposal.signers.push(signer.wallet);
   }
 
   await proposal.save();

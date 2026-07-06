@@ -27,6 +27,7 @@ const {
 
 const logger = require('../../utils/logger');
 const AppError = require('../../utils/AppError');
+const { runExclusive } = require('../../utils/mutex');
 
 // ---------------------------------------------------------------------------
 // Lazy, memoized config + clients (import-safe)
@@ -189,8 +190,16 @@ const isBadSeqError = (err) =>
  */
 async function sendTx(method, args = [], signerKP = null) {
   const cfg = getConfig();
-  const { server, contract, serviceKP } = getClients();
+  const { serviceKP } = getClients();
   const kp = signerKP || serviceKP;
+  // Serialize all sends signed by the SAME key so their sequence numbers can't
+  // collide under concurrent writes (H4 #13). Different signers run in parallel.
+  return runExclusive(`tx:${kp.publicKey()}`, () => _sendTxInner(method, args, kp));
+}
+
+async function _sendTxInner(method, args, kp) {
+  const cfg = getConfig();
+  const { server, contract } = getClients();
   const startedAt = Date.now();
   const maxAttempts = Math.max(1, Number(cfg.txMaxRetries || 0) + 1);
 

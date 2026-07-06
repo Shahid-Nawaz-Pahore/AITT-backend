@@ -114,11 +114,70 @@ Responses match `frontend-aitt/src/mock/types.ts` (`DocItem` / `Company` / `SubA
 - `GET /documents/:id/file` (role-scoped) — download the stored upload (disk-storage mode).
 
 ### Admin / ops (`/api/v1/admin`)
-- `POST /admin/jobs/expiry` (admin) — run the expiry job (issued→expired + critical/warning alerts + notifications). Wire to cron in prod.
-- `GET /admin/audit` (admin) — request-level audit trail (paginated).
+- `POST /admin/jobs/expiry` (admin) — run the expiry job (issued→expired + critical/warning alerts + notifications).
+- `POST /admin/jobs/outbox` (admin) — drain the durable chain→DB mirror outbox.
+- `POST /admin/jobs/reconcile` (admin) — reconcile chain↔DB (chain is source of truth; `{ fix:false }` to report-only).
+- `GET /admin/audit` (admin) — request-level audit trail (paginated; includes auth **failures**, see H4).
 
 ### Hardening
 - Global **audit middleware** records every successful mutating request (`AuditLog`).
 - **Expiry job** transitions `issued→expired` + raises alerts/notifications; idempotent.
 - `wallet.js` **hard-fails in production** without `KEY_ENCRYPTION_SECRET`.
 - Seed defaults: `node src/migrations/seed-p5.js` (frameworks + templates, idempotent).
+
+## Production hardening (H2–H4 + Epic I) — remediation
+
+All chain access goes through the **sorobanAdapter** — see `docs/soroban-adapter-spec.md`.
+
+### A. Startup safety & config (`src/config/env.js`)
+- **Fail-fast validation** at boot (`server.js`): every required var is checked and safe
+  defaults applied; on any problem the process logs the FULL list and `exit(1)` — never limps
+  on bad config. Zero new deps (hand-rolled, fully auditable — a deliberate supply-chain choice
+  over a heavyweight schema lib).
+- **Production guards (audit C2):** in `NODE_ENV=production` the app **refuses to boot** if
+  `SOROBAN_ADAPTER≠real` (no silent fake chain), or if `JWT_ACCESS_SECRET` / `KEY_ENCRYPTION_SECRET`
+  are unset/too-short, or if the real adapter is missing `RPC_URL`/`CONTRACT_ID`/`SERVICE_SECRET`.
+- **Key versioning (H2 #3):** custodial ciphertext is now `gcm:v1:…` (legacy `gcm:…` still
+  decrypts); `wallet.rotateKey(stored,{oldSecret,newSecret})` is the rotation seam; `getDataKey()`
+  is the single KMS integration boundary (TODO: swap for AWS/GCP KMS/Vault — no caller changes).
+
+### B. Real-chain integration (Epic I)
+- **Legacy retired (H3 #9):** `soroban.service.js` / `og-soro.js` / `web3.service.js` deleted;
+  `certificate.service` + `/soroban/*` ops routes repointed to the adapter. This removed the last
+  live-network tests from the default suite (the 2 chronic `soroban.service.int` failures are gone).
+- **Wallet funding (B5):** freshly-created custodial wallets are testnet-friendbot funded on the
+  admin-gated onboarding steps (company approval, sub-admin activation) via
+  `services/funding.service` (`AUTO_FUND_WALLETS`, real-mode only, best-effort). Mainnet funding is
+  a clearly-marked treasury seam. Proven live: a brand-new wallet funds + signs `store_document`.
+- **I3 golden path:** `npm run test:live` includes a full service-level flow against the deployed
+  contract with the indexer mirroring into Mongo (see the adapter spec).
+
+### C. Durability & correctness
+- **Durable outbox (H3 #6, `models/Outbox` + `services/outbox.service`):** `writeThrough` persists
+  a pending mirror row **before** applying it, so a crash between "chain write succeeded" and "DB
+  mirror" self-heals — the outbox processor replays the idempotent mirror with backoff (dead-letters
+  after `maxAttempts`). Scheduled + `POST /admin/jobs/outbox`.
+- **Reconcile scheduled** (chain = source of truth) via the scheduler + `POST /admin/jobs/reconcile`.
+- **Concurrency (H3):** two officers reviewing the same doc no longer lose a review — the reviews
+  array mutation is an **atomic positional upsert** (`indexer.mirrorReview`); off-chain
+  framework-proposal signing uses an atomic `$addToSet` + single-flip execute (no double-apply);
+  same-signer transactions are **serialized** (`utils/mutex`) so sequence numbers can't collide,
+  with the `tx_bad_seq` rebuild-retry as a backstop.
+
+### D. Operations & hardening
+- **`GET /health`** (liveness — always 200 if the process is up) and **`GET /ready`** (readiness —
+  503 if Mongo down or, in real mode, the Soroban RPC is unreachable; also reports outbox backlog).
+- **Storage abstraction (H4 #11, `services/storage.service`):** `STORAGE_DRIVER=auto|disk|gridfs|memory`.
+  Uploaded documents default to **GridFS** (survive a multi-instance deploy); disk kept as one impl;
+  `GET /documents/:id/file` now streams from whichever driver stored it. S3/MinIO is a drop-in seam.
+- **Scheduler (D12, `services/scheduler`):** outbox/expiry/reconcile run on intervals, each under a
+  **lease-based distributed lock** (`models/JobLock` + `utils/lock`) so only one instance runs a job
+  at a time. `ENABLE_SCHEDULER` (default on in prod). Expiry keeps its injectable `now` for tests.
+- **Audit auth failures (D13):** the audit middleware now records `denied` (401/403/429 — failed
+  logins, forbidden access, lockouts) and `error` (5xx on mutations), not just successful mutations.
+- **No secrets logged (D13):** `utils/logger` redacts any sensitive-looking meta key
+  (password/secret/token/apikey/authorization/private-key/mnemonic) → `[REDACTED]`, recursively.
+- **Refresh-token reuse detection (D13):** presenting an already-revoked (rotated) refresh token is
+  treated as theft — all of that user's sessions are revoked and the attempt rejected 401.
+- **`npm audit`** (prod deps): **0 critical / 0 high** (3 moderate remain in the dev-only
+  `mongodb-memory-server` — acceptable).

@@ -5,13 +5,16 @@ jest.mock('fs', () => ({
   unlinkSync: jest.fn()
 }));
 
-// Mock the soroban service
-jest.mock('../src/services/soroban.service', () => ({
+// Legacy chain access now flows through the sorobanAdapter (soroban.service was
+// retired) — mock getAdapter() to return an in-test fake adapter.
+const mockAdapter = {
   readDocument: jest.fn(),
   verifyDocument: jest.fn(),
   storeDocument: jest.fn(),
-  isWhitelisted: jest.fn()
-}));
+  isWhitelisted: jest.fn(),
+  mainAdminAddress: jest.fn().mockResolvedValue('GADMIN000000000000000000000000000000000000000000000000'),
+};
+jest.mock('../src/services/sorobanAdapter', () => ({ getAdapter: () => mockAdapter }));
 
 // Mock the logger
 jest.mock('../src/utils/logger', () => ({
@@ -32,7 +35,9 @@ const CertificateEvent = require('../src/models/CertificateEvent');
 const Web3Tx = require('../src/models/Web3Tx');
 const AppError = require('../src/utils/AppError');
 
-const sorobanService = require('../src/services/soroban.service');
+// `sorobanService` in these tests refers to the mocked adapter (getAdapter()).
+const { getAdapter } = require('../src/services/sorobanAdapter');
+const sorobanService = getAdapter();
 
 // Define models once at module level
 let Company, User;

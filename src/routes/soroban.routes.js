@@ -33,9 +33,10 @@ router.get('/owner', sorobanController.ownerAddress);
 // Protected: transfer_ownership
 router.post('/transfer_ownership', requireAuth(['super_admin']), sorobanController.transferOwnership);
 
-// Wallet helpers (public)
-router.post('/helpers/create_wallet', sorobanController.createWallet);
-router.post('/helpers/fund_wallet', sorobanController.fundWallet);
+// Wallet helpers (admin-only ops — were public; a public keygen/funding endpoint
+// is an abuse vector, so locked down as part of the hardening).
+router.post('/helpers/create_wallet', requireAuth(['super_admin', 'regulator_admin']), sorobanController.createWallet);
+router.post('/helpers/fund_wallet', requireAuth(['super_admin', 'regulator_admin']), sorobanController.fundWallet);
 
 // Init contract (owner) - protected
 router.post('/init', requireAuth(['super_admin']), sorobanController.initContract);

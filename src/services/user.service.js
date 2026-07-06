@@ -7,7 +7,7 @@ const logger = require('../utils/logger');
  */
 async function findUserById(id) {
   const user = await User.findById(id);
-  if (!user) throw new AppError('User not found', 404);
+  if (!user) throw new AppError(404, 'User not found');
   return user;
 }
 
@@ -23,7 +23,7 @@ async function findUserByEmail(email) {
  */
 async function createUser({ name, email, password, role = 'company_admin', companyId = null }) {
   const existing = await User.findOne({ email: email.toLowerCase() });
-  if (existing) throw new AppError('Email already registered', 400);
+  if (existing) throw new AppError(400, 'Email already registered');
 
   const user = await User.create({ name, email: email.toLowerCase(), password, role, companyId });
   return user;
@@ -39,13 +39,13 @@ async function updateUser(id, updates) {
     .reduce((obj, key) => ({ ...obj, [key]: updates[key] }), {});
 
   const user = await User.findByIdAndUpdate(id, filtered, { new: true });
-  if (!user) throw new AppError('User not found', 404);
+  if (!user) throw new AppError(404, 'User not found');
   return user;
 }
 
 async function promoteUserToRegulatorAdmin(id) {
   const user = await User.findById(id); 
-  if (!user) throw new AppError('User not found', 404);
+  if (!user) throw new AppError(404, 'User not found');
   
   user.role = 'regulator_admin';
   // user.regulatorId = regulatorId;
@@ -55,7 +55,7 @@ async function promoteUserToRegulatorAdmin(id) {
 
 async function demoteRegulatorAdmin(id) {
   const user = await User.findById(id); 
-  if (!user) throw new AppError('User not found', 404);
+  if (!user) throw new AppError(404, 'User not found');
   
   user.role = 'company_admin';
   //user.regulatorId = null;
@@ -68,7 +68,7 @@ async function demoteRegulatorAdmin(id) {
  */
 async function deleteUser(id) {
   const user = await User.findByIdAndDelete(id);
-  if (!user) throw new AppError('User not found', 404);
+  if (!user) throw new AppError(404, 'User not found');
   return true;
 }
 

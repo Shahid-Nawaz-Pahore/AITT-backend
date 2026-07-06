@@ -142,11 +142,15 @@ function signAccessToken(user) {
  */
 async function issueRefreshToken(user, ctx = {}) {
   try {
-    const raw = generateRandomToken(48);
-    const tokenHash = await hashPassword(raw);
+    // Split token: `selector.verifier`. selector = O(1) lookup key (stored
+    // plaintext, indexed); verifier = the secret (only bcrypt(verifier) stored).
+    const selector = generateRandomToken(16);
+    const verifier = generateRandomToken(48);
+    const tokenHash = await hashPassword(verifier);
 
     const doc = await RefreshToken.create({
       userId: user._id,
+      selector,
       tokenHash,
       userAgent: ctx.ua,
       ip: ctx.ip,
@@ -154,7 +158,7 @@ async function issueRefreshToken(user, ctx = {}) {
     });
 
     logger.debug('Refresh token issued', { userId: user._id, refreshId: doc._id });
-    return raw;
+    return `${selector}.${verifier}`;
   } catch (err) {
     logger.error('Failed to issue refresh token', { userId: user._id, err: err.message });
     throw new AppError(500, 'Failed to issue refresh token', err.message);
@@ -214,30 +218,47 @@ async function login({ email, password, ip, ua }) {
  */
 async function refresh({ refreshTokenRaw }) {
   try {
-    const tokens = await RefreshToken.find({ revokedAt: null }).sort({ createdAt: -1 }).limit(100);
+    if (typeof refreshTokenRaw !== 'string' || !refreshTokenRaw.includes('.')) {
+      throw new AppError(401, 'Invalid refresh token');
+    }
+    const dot = refreshTokenRaw.indexOf('.');
+    const selector = refreshTokenRaw.slice(0, dot);
+    const verifier = refreshTokenRaw.slice(dot + 1);
+    if (!selector || !verifier) throw new AppError(401, 'Invalid refresh token');
 
-    for (const t of tokens) {
-      const match = await bcrypt.compare(refreshTokenRaw, t.tokenHash);
-      if (match) {
-        if (t.expiresAt && t.expiresAt < new Date()) {
-          throw new AppError(401, 'Refresh token expired');
-        }
+    // O(1) lookup by selector, then a SINGLE bcrypt compare of the verifier
+    // (E-audit H3 — no more O(n) scan / 200-token cliff).
+    const token = await RefreshToken.findOne({ selector });
+    if (!token) throw new AppError(401, 'Invalid refresh token');
 
-        t.revokedAt = new Date();
-        await t.save();
+    const match = await bcrypt.compare(verifier, token.tokenHash);
+    if (!match) throw new AppError(401, 'Invalid refresh token');
 
-        const user = await User.findById(t.userId);
-        if (!user) throw new AppError(404, 'User not found for refresh token');
-
-        const access = signAccessToken(user);
-        const newRefresh = await issueRefreshToken(user);
-
-        logger.info('Refresh token exchanged', { userId: user._id, refreshId: t._id });
-        return { access, refresh: newRefresh };
-      }
+    // REUSE DETECTION (D13): a matching but ALREADY-REVOKED token is a replay of
+    // a rotated (single-use) token — a strong signal of theft. Revoke the whole
+    // family (all the user's active sessions) and reject.
+    if (token.revokedAt) {
+      logger.error('Refresh token REUSE detected — revoking all sessions for user', { userId: String(token.userId) });
+      await RefreshToken.updateMany({ userId: token.userId, revokedAt: null }, { $set: { revokedAt: new Date() } });
+      throw new AppError(401, 'Refresh token reuse detected; all sessions have been revoked');
     }
 
-    throw new AppError(401, 'Invalid refresh token');
+    if (token.expiresAt && token.expiresAt < new Date()) {
+      throw new AppError(401, 'Refresh token expired');
+    }
+
+    // Rotate: revoke the presented token, issue a fresh one.
+    token.revokedAt = new Date();
+    await token.save();
+
+    const user = await User.findById(token.userId);
+    if (!user) throw new AppError(404, 'User not found for refresh token');
+
+    const access = signAccessToken(user);
+    const newRefresh = await issueRefreshToken(user);
+
+    logger.info('Refresh token exchanged', { userId: user._id, refreshId: token._id });
+    return { access, refresh: newRefresh };
   } catch (err) {
     logger.error('Refresh token failed', { err: err.message });
     throw err instanceof AppError ? err : new AppError(500, 'Refresh token failed', err.message);

@@ -8,4 +8,9 @@ module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/?(*.)+(spec|test).[jt]s?(x)'],
   testPathIgnorePatterns: ['/node_modules/', '/__tests__/live/'],
+  // `--detectOpenHandles` reports ZERO leaked JS handles; the "did not exit"
+  // notice comes from mongodb-memory-server's native `mongod` child processes
+  // (which detectOpenHandles can't see) being reaped a beat after the run. Force
+  // a clean exit so CI doesn't hang on that teardown latency.
+  forceExit: true,
 };
