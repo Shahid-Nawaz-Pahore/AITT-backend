@@ -51,7 +51,13 @@ const realAdapter = {
   // Scalars (address/u32/bool) decode cleanly via scValToNative; structs +
   // enums + u64 are normalized through decode.js so every return is shaped
   // EXACTLY like the stub (see decode.js header).
-  mainAdminAddress: () => rpc.fetchValue('main_admin_address', []),
+  // The main admin IS the custodial service signer in this deployment, so return
+  // the service key's own address instead of a chain read. The `main_admin_address`
+  // simulate can fail to decode its Address return on some serverless/runtime + RPC
+  // combinations ("fetchValue failed for main_admin_address"); this yields the same
+  // value with no round-trip. Every write that needs the admin arg signs with this
+  // same key, so it stays consistent by construction.
+  mainAdminAddress: async () => rpc.getClients().serviceKP.publicKey(),
   governanceThreshold: async () => Number(await rpc.fetchValue('governance_threshold', [])),
   isSubAdmin: async (addr) => !!(await rpc.fetchValue('is_sub_admin_public', [rpc.addressScVal(addr)])),
   isWhitelisted: async (addr) => !!(await rpc.fetchValue('is_whitelisted', [rpc.addressScVal(addr)])),
