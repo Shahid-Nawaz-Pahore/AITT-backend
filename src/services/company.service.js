@@ -128,8 +128,13 @@ async function registerCompany({ name, email, password = null, contactPhone = nu
     throw new AppError(409, 'A user with this email already exists');
   }
 
-  // One custodial key per company (used as the store_document actor).
-  const custodial = wallet ? { publicKey: wallet, secretEnc: null } : generateCustodialWallet();
+  // One custodial key per company (used as the store_document actor). The backend
+  // MUST hold the key to sign store_document, so we ALWAYS generate a custodial
+  // wallet and ignore any client-supplied address: a BYO wallet has no secret to
+  // sign with, and an unvalidated one (e.g. the old demo fakeWallet) is rejected
+  // by the real chain. The `wallet` param is kept for API back-compat but unused.
+  if (wallet) logger.warn('registerCompany: ignoring client-supplied wallet (custodial model)', { email });
+  const custodial = generateCustodialWallet();
 
   const company = await Company.create({
     name,
