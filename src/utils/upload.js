@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const AppError = require('./AppError');
 
 const UPLOAD_BASE_DIR = process.env.UPLOAD_BASE_DIR || '/data';
 const CERT_UPLOAD_DIR = process.env.CERT_UPLOAD_DIR || 'certificates';
@@ -32,9 +33,14 @@ if (useDisk) {
   }
 }
 
-// allowed mimetypes
-const allowed = (process.env.ALLOWED_MIMETYPES || 'application/pdf,image/png,image/jpeg')
-  .split(',');
+// Documents only by default (PDF + Word). Videos, images, archives and apps are
+// rejected. Override with ALLOWED_MIMETYPES only if other document types are needed.
+const DEFAULT_ALLOWED =
+  'application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const allowed = (process.env.ALLOWED_MIMETYPES || DEFAULT_ALLOWED)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 function secureFilename(originalName) {
   const ext = path.extname(originalName).slice(0, 20) || '';
@@ -56,7 +62,13 @@ if (useDisk) {
 
 function fileFilter(req, file, cb) {
   if (!allowed.includes(file.mimetype)) {
-    return cb(new Error('Invalid file type'), false);
+    return cb(
+      new AppError(
+        400,
+        `Only document files are allowed (PDF or Word). "${file.originalname}" was rejected (type: ${file.mimetype || 'unknown'}).`,
+      ),
+      false,
+    );
   }
   cb(null, true);
 }
