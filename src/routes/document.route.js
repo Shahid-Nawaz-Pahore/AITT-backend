@@ -15,6 +15,10 @@ router.post('/', requireAuth(['company_admin', 'super_admin']), uploadSingle('fi
 // List (role-scoped: company sees own; reviewers/admins see all) + paginated.
 router.get('/', requireAuth(ANY_AUTH), documentController.listDocuments);
 
+// Public certificate registry (no auth) — issued/revoked/expired only.
+// Registered before '/:id' so "registry" isn't captured as an id.
+router.get('/registry', documentController.publicRegistry);
+
 // Public verification (no auth) — by hash or by id.
 router.get('/verify/:hash', documentController.verifyDocument);
 router.get('/:id/verify', documentController.verifyDocument);

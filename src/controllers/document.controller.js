@@ -62,6 +62,17 @@ async function getDocument(req, res, next) {
   }
 }
 
+// Public certificate registry (no auth) — issued/revoked/expired certs only.
+async function publicRegistry(req, res, next) {
+  try {
+    const { page = 1, limit = 100 } = req.query;
+    const result = await documentService.listPublicRegistry({ page, limit });
+    return res.json({ success: true, ...paginate(result.items, result) });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function reviewDocument(req, res, next) {
   try {
     const { decision, complianceScore, comment } = req.body || {};
@@ -122,6 +133,7 @@ async function downloadDocumentFile(req, res, next) {
 module.exports = {
   submitDocument,
   listDocuments,
+  publicRegistry,
   getDocument,
   reviewDocument,
   issueDocument,

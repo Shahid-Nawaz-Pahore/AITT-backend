@@ -122,6 +122,29 @@ async function listDocuments({ user, page = 1, limit = 20, status = null }) {
   return { items: docs.map((d) => toDocItem(d)), total, page, limit };
 }
 
+/**
+ * listPublicRegistry — PUBLIC (no auth). Only issued/revoked/expired certificates,
+ * with reviewer PII stripped. Powers the public Certificate Registry page.
+ */
+async function listPublicRegistry({ page = 1, limit = 100 } = {}) {
+  page = Math.max(1, parseInt(page, 10) || 1);
+  limit = Math.min(200, Math.max(1, parseInt(limit, 10) || 100));
+  const filter = { status: { $in: ['issued', 'revoked', 'expired'] } };
+  const [docs, total] = await Promise.all([
+    Certificate.find(filter)
+      .populate('companyId', 'name')
+      .sort({ updatedAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit),
+    Certificate.countDocuments(filter),
+  ]);
+  const items = docs.map((d) => {
+    const { reviews, ...pub } = toDocItem(d); // eslint-disable-line no-unused-vars
+    return pub; // drop reviewer PII for the public list
+  });
+  return { items, total, page, limit };
+}
+
 /** getDocument — single DocItem, role-scoped. */
 async function getDocument({ id, user }) {
   const cert = await Certificate.findById(id).populate('companyId', 'name');
@@ -308,6 +331,7 @@ async function getDocumentFile({ id, user }) {
 module.exports = {
   submitDocument,
   listDocuments,
+  listPublicRegistry,
   getDocument,
   reviewDocument,
   issueDocument,

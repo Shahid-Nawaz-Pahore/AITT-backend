@@ -264,10 +264,10 @@ async function _sendTxInner(method, args, kp) {
         continue;
       }
       logger.error('sendTx failed', { method, message: err?.message?.slice?.(0, 200) ?? String(err) });
-      throw err instanceof AppError ? err : new AppError(502, `sendTx failed for ${method}`, err.message ?? String(err));
+      throw err instanceof AppError ? err : new AppError(502, `sendTx failed for ${method}: ${(err?.message ?? String(err)).slice(0, 180)}`, err.message ?? String(err));
     }
   }
-  throw lastErr instanceof AppError ? lastErr : new AppError(502, `sendTx failed for ${method}`, String(lastErr));
+  throw lastErr instanceof AppError ? lastErr : new AppError(502, `sendTx failed for ${method}: ${String(lastErr?.message ?? lastErr).slice(0, 180)}`, String(lastErr));
 }
 
 /**
@@ -294,7 +294,7 @@ async function fetchValue(method, args = []) {
     return val ?? null;
   } catch (err) {
     logger.error('fetchValue failed', { method, message: err?.message?.slice?.(0, 200) ?? String(err) });
-    throw err instanceof AppError ? err : new AppError(502, `fetchValue failed for ${method}`, err.message ?? String(err));
+    throw err instanceof AppError ? err : new AppError(502, `fetchValue failed for ${method}: ${(err?.message ?? String(err)).slice(0, 180)}`, err.message ?? String(err));
   }
 }
 
