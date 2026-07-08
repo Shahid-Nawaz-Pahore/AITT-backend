@@ -73,14 +73,35 @@ function fileFilter(req, file, cb) {
   cb(null, true);
 }
 
+const MAX_BYTES = parseInt(process.env.MAX_UPLOAD_BYTES || '10485760', 10); // 10MB default
+
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: parseInt(process.env.MAX_UPLOAD_BYTES || '10485760', 10) } // 10MB default
+  limits: { fileSize: MAX_BYTES },
 });
 
+// Wrap multer so its errors surface as clean 400s (with a clear message) instead
+// of a generic 500. The AppError thrown by fileFilter (wrong type) passes through.
+function uploadSingle(field = 'file') {
+  const mw = upload.single(field);
+  return (req, res, next) =>
+    mw(req, res, (err) => {
+      if (!err) return next();
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return next(
+            new AppError(400, `File is too large. Maximum size is ${Math.round(MAX_BYTES / (1024 * 1024))} MB.`),
+          );
+        }
+        return next(new AppError(400, `Upload error: ${err.message}`));
+      }
+      return next(err);
+    });
+}
+
 module.exports = {
-  uploadSingle: (field = 'file') => upload.single(field),
+  uploadSingle,
   DEST_DIR,
   CERT_UPLOAD_DIR,
   IS_DISK_UPLOAD: useDisk // effective mode (may have degraded to memory on a read-only FS)
