@@ -125,7 +125,7 @@ describe('governance_rule proposal — UpdateThreshold via multi-sig', () => {
     const signed = await proposalService.signProposal({ id: created.proposal.id, signerUserId: signer._id, adapter });
     expect(signed.status).toBe('executed');
 
-    const gov = await governanceService.getGovernance();
+    const gov = await governanceService.getGovernance({ adapter });
     expect(gov.required).toBe(2);
   });
 });

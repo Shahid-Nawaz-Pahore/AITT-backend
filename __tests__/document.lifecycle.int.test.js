@@ -37,7 +37,7 @@ beforeEach(async () => {
 
 // Helpers that drive the full setup and return the ids the services need.
 async function setupCompany({ approve = true } = {}) {
-  const registered = await companyService.registerCompany({ name: 'Acme', email: 'admin@acme.io', password: 'pw' });
+  const registered = await companyService.registerCompany({ name: 'Acme', email: 'admin@acme.io', password: 'Passw0rd' });
   const company = approve ? await companyService.approveCompany(registered.id, { adapter }) : registered;
   const adminUser = await User.findOne({ companyId: registered.id });
   return { company, adminUser };

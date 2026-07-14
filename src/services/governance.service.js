@@ -23,20 +23,37 @@ async function activeSigners() {
 }
 
 /**
- * getGovernance — current { required, total, signerWallets }. Keeps `total`
- * (M) in sync with the active-signer count and clamps required <= total.
+ * getGovernance — current { required, total, signerWallets, thresholdSource }.
+ * The threshold N (`required`) is read LIVE from the smart contract
+ * (`governance_threshold`); the DB copy is only a mirror/cache used as a fallback
+ * if the chain read fails. `total` (M) tracks the active-signer count.
  */
-async function getGovernance() {
+async function getGovernance({ adapter = getAdapter() } = {}) {
   const cfg = await GovernanceConfig.getSingleton();
   const signerWallets = await activeSigners();
   const total = Math.max(signerWallets.length, 1);
 
-  let changed = false;
-  if (cfg.total !== total) { cfg.total = total; changed = true; }
-  if (cfg.required > total) { cfg.required = total; changed = true; }
-  if (changed) await cfg.save();
+  // Authoritative N comes from the contract; fall back to the DB mirror on error.
+  let required = cfg.required;
+  let thresholdSource = 'mirror';
+  try {
+    const onChain = await adapter.governanceThreshold();
+    if (Number.isInteger(onChain) && onChain > 0) {
+      required = onChain;
+      thresholdSource = 'chain';
+    }
+  } catch (e) {
+    logger.warn('governance_threshold on-chain read failed; using mirrored value', { error: e.message });
+  }
 
-  return { required: cfg.required, total, signerWallets };
+  // Best-effort: keep the DB mirror in sync with what we just read (never blocks).
+  if (cfg.required !== required || cfg.total !== total) {
+    cfg.required = required;
+    cfg.total = total;
+    try { await cfg.save(); } catch (e) { logger.warn('governance mirror save failed', { error: e.message }); }
+  }
+
+  return { required, total, signerWallets, thresholdSource };
 }
 
 /**
@@ -64,7 +81,7 @@ async function setGovernance({ required, total = null, adminUserId = null, adapt
   await cfg.save();
 
   logger.info('Governance threshold updated', { required: N, total: effectiveTotal });
-  return getGovernance();
+  return getGovernance({ adapter });
 }
 
 module.exports = { getGovernance, setGovernance, activeSigners };

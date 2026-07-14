@@ -18,16 +18,23 @@ const { generateCustodialWallet } = require('../utils/wallet');
 const { hashPassword } = require('../utils/crypto');
 const { toSubAdmin, paginate } = require('../utils/serializers');
 const { fundIfEnabled } = require('./funding.service');
+const { assertDeliverableEmail, assertValidPassword } = require('../utils/validation');
 
 /** inviteSubAdmin — create the DB profile + custodial wallet + login. */
 async function inviteSubAdmin({ name, email, password = null, wallet = null, invitedByUserId = null }) {
   if (!name || !email) throw new AppError(400, 'name and email are required');
+  await assertDeliverableEmail(email);
+  if (password) assertValidPassword(password);
   const lowerEmail = String(email).toLowerCase();
 
   if (await SubAdmin.findOne({ email: lowerEmail })) throw new AppError(409, 'A sub-admin with this email already exists');
   if (await User.findOne({ email: lowerEmail })) throw new AppError(409, 'A user with this email already exists');
 
-  const custodial = wallet ? { publicKey: wallet, secretEnc: null } : generateCustodialWallet();
+  // Always generate a custodial wallet — the backend must hold the key to sign the
+  // sub-admin's on-chain actions. Any client-supplied wallet is ignored (an
+  // unvalidated one, e.g. the old demo fakeWallet, breaks the real chain).
+  if (wallet) logger.warn('inviteSubAdmin: ignoring client-supplied wallet (custodial model)', { email: lowerEmail });
+  const custodial = generateCustodialWallet();
 
   const sa = await SubAdmin.create({
     name,

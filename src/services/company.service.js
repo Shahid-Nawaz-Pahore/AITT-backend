@@ -10,6 +10,7 @@ const { generateCustodialWallet } = require('../utils/wallet');
 const { hashPassword } = require('../utils/crypto');
 const { toCompany, paginate } = require('../utils/serializers');
 const { fundIfEnabled } = require('./funding.service');
+const { assertDeliverableEmail, assertValidPassword } = require('../utils/validation');
 
 /**
  * Create a company. If session provided, this will be created inside that session.
@@ -123,6 +124,8 @@ async function listCompanies({ skip = 0, limit = 50, q = '' } = {}) {
  */
 async function registerCompany({ name, email, password = null, contactPhone = null, wallet = null }) {
   if (!name || !email) throw new AppError(400, 'name and email are required');
+  await assertDeliverableEmail(email);
+  if (password) assertValidPassword(password);
 
   if (await User.findOne({ email: String(email).toLowerCase() })) {
     throw new AppError(409, 'A user with this email already exists');
