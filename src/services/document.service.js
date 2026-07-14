@@ -323,7 +323,8 @@ async function getDocumentFile({ id, user }) {
   const { stream, mimeType, filename } = await storage.getStream(desc);
   return {
     stream,
-    filename: filename || cert.originalFilename || String(cert._id),
+    // Use the ORIGINAL uploaded name for the download, not the random storage key.
+    filename: cert.originalFilename || cert.certificateName || filename || `${cert._id}`,
     mimeType: mimeType || cert.mimeType || 'application/octet-stream',
   };
 }
