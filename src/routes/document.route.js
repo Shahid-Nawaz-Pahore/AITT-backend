@@ -18,6 +18,12 @@ router.get('/', requireAuth(ANY_AUTH), documentController.listDocuments);
 // Public certificate registry (no auth) — issued/revoked/expired only.
 // Registered before '/:id' so "registry" isn't captured as an id.
 router.get('/registry', documentController.publicRegistry);
+// Public certificate detail (no auth) — lets anyone open an issued cert from the registry.
+router.get('/registry/:id', documentController.publicDocument);
+
+// The current sub-admin's own reviews (scoped server-side).
+// Registered before '/:id' so "mine" isn't captured as an id.
+router.get('/mine/reviews', requireAuth(REVIEWER), documentController.myReviews);
 
 // Public verification (no auth) — by hash or by id.
 router.get('/verify/:hash', documentController.verifyDocument);

@@ -155,6 +155,60 @@ async function getDocument({ id, user }) {
   return toDocItem(cert);
 }
 
+/**
+ * getPublicDocument — PUBLIC (no auth) detail for a certificate that has reached
+ * the registry (issued / revoked / expired). Powers the public certificate page
+ * so anyone can open a cert from the Registry without being its owner.
+ */
+async function getPublicDocument(id) {
+  let cert = null;
+  try {
+    cert = await Certificate.findById(id).populate('companyId', 'name');
+  } catch (_) {
+    cert = null; // invalid ObjectId etc.
+  }
+  if (!cert || !['issued', 'revoked', 'expired'].includes(cert.status)) {
+    throw new AppError(404, 'Certificate not found');
+  }
+  return toDocItem(cert);
+}
+
+/**
+ * listMyReviews — DocItems the CURRENT sub-admin has personally reviewed, with
+ * each doc's `reviews` narrowed to that reviewer's own review only. This is why
+ * a fresh/other reviewer never sees someone else's work in "My Reviews".
+ */
+async function listMyReviews({ userId }) {
+  const user = await User.findById(userId);
+  if (!user) throw new AppError(401, 'Account not found');
+  let sa = null;
+  if (user.subAdminId) sa = await SubAdmin.findById(user.subAdminId);
+  if (!sa && user.walletAddress) sa = await SubAdmin.findOne({ walletAddress: user.walletAddress });
+  if (!sa) return { items: [], total: 0, page: 1, limit: 0 };
+
+  const saId = String(sa._id);
+  const wallet = sa.walletAddress || null;
+  const isMine = (r) =>
+    (r && r.reviewerId && String(r.reviewerId) === saId) ||
+    (wallet && r && r.reviewerWallet === wallet);
+
+  const or = [{ 'reviews.reviewerId': sa._id }];
+  if (wallet) or.push({ 'reviews.reviewerWallet': wallet });
+
+  const docs = await Certificate.find({ $or: or })
+    .populate('companyId', 'name')
+    .sort({ updatedAt: -1 });
+
+  const items = [];
+  for (const d of docs) {
+    const item = toDocItem(d);
+    // toDocItem maps cert.reviews 1:1 in order, so index alignment is safe.
+    item.reviews = (item.reviews || []).filter((_, idx) => isMine(d.reviews[idx]));
+    if (item.reviews.length > 0) items.push(item);
+  }
+  return { items, total: items.length, page: 1, limit: items.length };
+}
+
 // Resolve the acting reviewer's SubAdmin profile (with custodial secret).
 async function resolveReviewer(userId) {
   const user = await User.findById(userId);
@@ -334,6 +388,8 @@ module.exports = {
   listDocuments,
   listPublicRegistry,
   getDocument,
+  getPublicDocument,
+  listMyReviews,
   reviewDocument,
   issueDocument,
   verifyDocument,

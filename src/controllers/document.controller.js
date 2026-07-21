@@ -73,6 +73,26 @@ async function publicRegistry(req, res, next) {
   }
 }
 
+// Public certificate detail (no auth) — issued/revoked/expired certs only.
+async function publicDocument(req, res, next) {
+  try {
+    const doc = await documentService.getPublicDocument(req.params.id);
+    return res.json({ success: true, data: doc });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// Reviews recorded by the CURRENT sub-admin only (scoped server-side).
+async function myReviews(req, res, next) {
+  try {
+    const result = await documentService.listMyReviews({ userId: req.user.sub });
+    return res.json({ success: true, ...paginate(result.items, result) });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function reviewDocument(req, res, next) {
   try {
     const { decision, complianceScore, comment } = req.body || {};
@@ -134,6 +154,8 @@ module.exports = {
   submitDocument,
   listDocuments,
   publicRegistry,
+  publicDocument,
+  myReviews,
   getDocument,
   reviewDocument,
   issueDocument,
