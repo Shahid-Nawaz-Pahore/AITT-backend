@@ -14,10 +14,10 @@ function bufferFromReq(req) {
 
 async function submitDocument(req, res, next) {
   try {
-    const { subject } = req.body || {};
+    const { subject, programId } = req.body || {};
     const filename = req.body.filename || req.file?.originalname;
     if (!req.file) return res.status(400).json({ success: false, message: 'File is required' });
-    if (!subject) return res.status(400).json({ success: false, message: 'subject is required' });
+    if (!subject && !programId) return res.status(400).json({ success: false, message: 'subject or programId is required' });
 
     // Company admins submit for their OWN company; admins may pass companyId.
     const companyId = isCompany(req.user.role) ? req.user.companyId : (req.body.companyId || req.user.companyId);
@@ -26,6 +26,7 @@ async function submitDocument(req, res, next) {
       buffer: bufferFromReq(req),
       filename,
       subject,
+      programId: programId || null,
       mimeType: req.file.mimetype,
       size: req.file.size,
       companyId,
@@ -150,11 +151,28 @@ async function downloadDocumentFile(req, res, next) {
   }
 }
 
+async function publicDownloadDocumentFile(req, res, next) {
+  try {
+    const { stream, filename, mimeType } = await documentService.getPublicDocumentFile(req.params.id);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+    stream.on('error', (e) => {
+      logger.error('public file stream error', { id: req.params.id, error: e.message });
+      if (!res.headersSent) next(e);
+      else res.destroy(e);
+    });
+    return stream.pipe(res);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   submitDocument,
   listDocuments,
   publicRegistry,
   publicDocument,
+  publicDownloadDocumentFile,
   myReviews,
   getDocument,
   reviewDocument,

@@ -40,9 +40,17 @@ async function resolveAlert(id) {
   return toAlert(a);
 }
 
-async function createAlert({ docId, message, dueDate, severity = 'info', kind = 'other' }) {
-  if (!message || !dueDate) throw new AppError(400, 'message and dueDate are required');
-  const a = await Alert.create({ docId, message, dueDate, severity, kind });
+async function createAlert({ docId = null, message, dueDate, severity = 'info', kind = 'other' }) {
+  if (!message) throw new AppError(400, 'message is required');
+  // docId + dueDate are optional: a manual regulatory update has no document and
+  // an optional effective date. Coerce empties so Mongoose doesn't reject them.
+  const a = await Alert.create({
+    docId: docId || null,
+    message,
+    dueDate: dueDate || new Date(),
+    severity,
+    kind,
+  });
   return toAlert(a);
 }
 

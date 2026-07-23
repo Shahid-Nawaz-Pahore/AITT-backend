@@ -30,6 +30,14 @@ const certSchema = new mongoose.Schema({
   certificateName: { type: String, required: true },
   subject: { type: String, required: true },
 
+  // Compliance program + jurisdiction (EU/US). programName/programType are
+  // snapshotted at submit time so the certificate keeps its label even if the
+  // program is later renamed or archived.
+  programId: { type: mongoose.Schema.Types.ObjectId, ref: 'ComplianceProgram', default: null, index: true },
+  programName: { type: String, default: null },
+  programType: { type: String, default: null },
+  jurisdiction: { type: String, enum: ['EU', 'US', null], default: null, index: true },
+
   metadataHash: { type: String, required: true, unique: true }, // sha256; UNIQUE (gap-compensation)
   // file metadata
   originalFilename: { type: String },

@@ -10,6 +10,7 @@ const subAdmins = require('./subadmin.routes');
 const proposals = require('./proposal.routes');
 const governance = require('./governance.routes');
 const frameworks = require('./framework.routes');
+const compliancePrograms = require('./complianceProgram.routes');
 const templates = require('./template.routes');
 const alerts = require('./alert.routes');
 const notifications = require('./notification.routes');
@@ -33,6 +34,8 @@ router.use('/proposals', proposals);
 router.use('/governance', governance);
 // P5: frameworks (read-only), templates (+.docx), alerts, notifications, admin/ops.
 router.use('/frameworks', frameworks);
+// Admin-managed AITT compliance programs (replaces external frameworks).
+router.use('/compliance-programs', compliancePrograms);
 router.use('/templates', templates);
 router.use('/alerts', alerts);
 router.use('/notifications', notifications);

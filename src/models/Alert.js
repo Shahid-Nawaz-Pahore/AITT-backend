@@ -13,10 +13,12 @@ const mongoose = require('mongoose');
 const alertSchema = new mongoose.Schema({
   // The related document (Certificate). Stored as ObjectId ref, surfaced to the
   // frontend as the string `docId`.
-  docId: { type: mongoose.Schema.Types.ObjectId, ref: 'Certificate', required: true, index: true },
+  // Optional: a manual regulatory update (monitoring notice) isn't tied to a document.
+  docId: { type: mongoose.Schema.Types.ObjectId, ref: 'Certificate', required: false, default: null, index: true },
 
   message: { type: String, required: true },
-  dueDate: { type: Date, required: true },
+  // Optional effective date; defaults to now when omitted.
+  dueDate: { type: Date, required: false, default: Date.now },
   severity: { type: String, enum: ['info', 'warning', 'critical'], default: 'info', index: true },
 
   // Categorize the source so the expiry job can avoid duplicate alerts.

@@ -33,6 +33,12 @@ function toDocItem(cert) {
     c.companyName ||
     null;
   const txHash = c.chain?.txHashIssue || c.chain?.txHashStore || c.txHash || undefined;
+  // Latest review decision, surfaced top-level so it survives the public
+  // registry's reviews[] stripping (the client's "Review status" field).
+  const revs = Array.isArray(c.reviews) ? c.reviews : [];
+  const latestRev = revs.length
+    ? revs.reduce((a, b) => (new Date(b.date || 0) > new Date(a.date || 0) ? b : a))
+    : null;
 
   return {
     id: String(c._id),
@@ -45,6 +51,11 @@ function toDocItem(cert) {
     hash: c.metadataHash,
     ...(txHash ? { txHash } : {}),
     ...(c.complianceScore != null ? { complianceScore: c.complianceScore } : {}),
+    ...(c.jurisdiction ? { jurisdiction: c.jurisdiction } : {}),
+    ...(c.programName ? { program: c.programName } : {}),
+    ...(c.programType ? { programType: c.programType } : {}),
+    ...(c.programId ? { programId: String(c.programId._id || c.programId) } : {}),
+    ...(latestRev ? { reviewStatus: latestRev.decision } : {}),
     reviews: Array.isArray(c.reviews) ? c.reviews.map(toReview) : [],
   };
 }

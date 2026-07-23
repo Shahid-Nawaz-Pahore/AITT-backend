@@ -20,6 +20,8 @@ router.get('/', requireAuth(ANY_AUTH), documentController.listDocuments);
 router.get('/registry', documentController.publicRegistry);
 // Public certificate detail (no auth) — lets anyone open an issued cert from the registry.
 router.get('/registry/:id', documentController.publicDocument);
+// Public download of a certified document (issued/revoked/expired only).
+router.get('/registry/:id/file', documentController.publicDownloadDocumentFile);
 
 // The current sub-admin's own reviews (scoped server-side).
 // Registered before '/:id' so "mine" isn't captured as an id.

@@ -13,6 +13,7 @@
 const crypto = require('crypto');
 const Certificate = require('../models/Certificate');
 const Company = require('../models/Company');
+const ComplianceProgram = require('../models/ComplianceProgram');
 const SubAdmin = require('../models/SubAdmin');
 const User = require('../models/User');
 const AppError = require('../utils/AppError');
@@ -41,10 +42,21 @@ function asDocItem(cert, companyName = null) {
  * submitDocument — re-hash the uploaded file, anchor via store_document, mirror.
  * The company must be approved (active / whitelisted) to anchor.
  */
-async function submitDocument({ buffer, filename, subject, mimeType = null, size = null, companyId, requestedByUserId, adapter = getAdapter() }) {
+async function submitDocument({ buffer, filename, subject, programId = null, mimeType = null, size = null, companyId, requestedByUserId, adapter = getAdapter() }) {
   if (!buffer || !buffer.length) throw new AppError(400, 'File is required');
-  if (!filename || !subject) throw new AppError(400, 'filename and subject are required');
+  if (!filename) throw new AppError(400, 'filename is required');
   if (!companyId) throw new AppError(400, 'companyId is required');
+
+  // Resolve the compliance program; its jurisdiction + name/type are snapshotted
+  // onto the certificate. `subject` stays for display continuity (defaults to the
+  // program name when not supplied explicitly).
+  let program = null;
+  if (programId) {
+    program = await ComplianceProgram.findById(programId);
+    if (!program) throw new AppError(404, 'Compliance program not found');
+  }
+  const resolvedSubject = (subject && String(subject).trim()) || (program && program.name) || null;
+  if (!resolvedSubject) throw new AppError(400, 'subject or programId is required');
 
   const company = await Company.findById(companyId).select('+walletSecretEnc');
   if (!company) throw new AppError(404, 'Company not found');
@@ -70,7 +82,7 @@ async function submitDocument({ buffer, filename, subject, mimeType = null, size
     mirror: {
       op: 'mirrorStoredDocument',
       payload: {
-        metadataHash, certificateName: filename, subject, companyId, requestedByUserId,
+        metadataHash, certificateName: filename, subject: resolvedSubject, companyId, requestedByUserId,
         network: company?.metadata?.network || 'testnet',
       },
     },
@@ -90,6 +102,13 @@ async function submitDocument({ buffer, filename, subject, mimeType = null, size
   mirrored.originalFilename = filename;
   if (mimeType) mirrored.mimeType = mimeType;
   if (size != null) mirrored.size = size;
+  // Snapshot the compliance program + jurisdiction onto the certificate.
+  if (program) {
+    mirrored.programId = program._id;
+    mirrored.programName = program.name;
+    mirrored.programType = program.type;
+    mirrored.jurisdiction = program.jurisdiction;
+  }
   await mirrored.save();
 
   logger.info('Document submitted', { id: mirrored._id, hashShort: metadataHash.slice(0, 12), companyId: String(companyId) });
@@ -174,6 +193,32 @@ async function getPublicDocument(id) {
 }
 
 /**
+ * getPublicDocumentFile — PUBLIC download of a certified document. The client
+ * wants certified documents publicly downloadable for transparency, so this is
+ * allowed only for certificates that have reached the registry (issued/revoked/
+ * expired).
+ */
+async function getPublicDocumentFile(id) {
+  let cert = null;
+  try {
+    cert = await Certificate.findById(id);
+  } catch (_) {
+    cert = null;
+  }
+  if (!cert || !['issued', 'revoked', 'expired'].includes(cert.status)) {
+    throw new AppError(404, 'Certificate not found');
+  }
+  const desc = cert.storage && (cert.storage.key || cert.storage.path) ? cert.storage : null;
+  if (!desc) throw new AppError(404, 'No stored file available for this certificate');
+  const { stream, mimeType, filename } = await storage.getStream(desc);
+  return {
+    stream,
+    filename: cert.originalFilename || cert.certificateName || filename || `${cert._id}`,
+    mimeType: mimeType || cert.mimeType || 'application/octet-stream',
+  };
+}
+
+/**
  * listMyReviews — DocItems the CURRENT sub-admin has personally reviewed, with
  * each doc's `reviews` narrowed to that reviewer's own review only. This is why
  * a fresh/other reviewer never sees someone else's work in "My Reviews".
@@ -245,10 +290,34 @@ async function reviewDocument({ id, reviewerUserId, decision, complianceScore, c
     throw new AppError(409, `Cannot review a document that is ${cert.status}`);
   }
 
+  const commentHash = sha256(Buffer.from(comment || '', 'utf8'));
+
+  // Main Admin can also review. They aren't a registered on-chain sub-admin, so
+  // their review is recorded off-chain (administrative review) — it counts toward
+  // the score/status but is not anchored via submit_review (no contract change).
+  const actingUser = await User.findById(reviewerUserId);
+  if (actingUser && actingUser.role === 'super_admin') {
+    const fresh = await indexer.mirrorReview({
+      metadataHash: cert.metadataHash,
+      review: {
+        reviewer: 'Main Admin', reviewerId: null, reviewerWallet: 'MAIN_ADMIN',
+        decision, complianceScore: score, comment, commentHash,
+      },
+      receipt: null,
+    });
+    if (cert.requestedByUserId) {
+      await notify({
+        userId: cert.requestedByUserId, type: 'review', title: 'Document reviewed',
+        message: `Your document "${cert.certificateName}" was reviewed: ${decision} (score ${score}).`,
+        entityType: 'document', entityId: String(cert._id),
+      });
+    }
+    logger.info('Document reviewed (main admin, off-chain)', { id: cert._id, decision, score });
+    return asDocItem(fresh, cert.companyId?.name);
+  }
+
   const sa = await resolveReviewer(reviewerUserId);
   const hadPriorReview = cert.reviews.some((r) => r.reviewerWallet === sa.walletAddress);
-
-  const commentHash = sha256(Buffer.from(comment || '', 'utf8'));
   const contractStatus = reviewDecisionToContract(decision); // e.g. 'ApprovedWithRecommendations'
   const signerSecret = decryptSecret(sa.walletSecretEnc);
 
@@ -389,6 +458,7 @@ module.exports = {
   listPublicRegistry,
   getDocument,
   getPublicDocument,
+  getPublicDocumentFile,
   listMyReviews,
   reviewDocument,
   issueDocument,
